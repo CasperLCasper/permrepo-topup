@@ -9,6 +9,39 @@ const RPC_URL = 'https://sepolia.base.org';
 const ARWEAVE_STORAGE_KEY = process.env.ARWEAVE_STORAGE_KEY;
 const TOP_UP_AMOUNT = process.env.TOP_UP_AMOUNT || '0.01';
 
+function getTurbo() {
+    const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
+    return TurboFactory.authenticated({
+        signer, token: 'base-eth', gatewayUrl: RPC_URL,
+        paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
+        uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
+    });
+}
+
+app.get('/api/check-credits', async (req, res) => {
+    try {
+        if (!ARWEAVE_STORAGE_KEY) {
+            return res.status(500).json({ error: 'ARWEAVE_STORAGE_KEY not configured' });
+        }
+
+        const turbo = getTurbo();
+        const { winc } = await turbo.getBalance();
+        
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const wallet = new ethers.Wallet(ARWEAVE_STORAGE_KEY, provider);
+        const address = await wallet.getAddress();
+        const ethBalance = await provider.getBalance(address);
+        
+        return res.json({
+            address,
+            ethBalance: ethers.formatEther(ethBalance),
+            credits: winc.toString()
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/topup-credits', async (req, res) => {
     try {
         if (!ARWEAVE_STORAGE_KEY) {
@@ -32,13 +65,7 @@ app.get('/api/topup-credits', async (req, res) => {
             });
         }
 
-        const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
-        const turbo = TurboFactory.authenticated({
-            signer, token: 'base-eth', gatewayUrl: RPC_URL,
-            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
-            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
-        });
-
+        const turbo = getTurbo();
         const { winc: before } = await turbo.getBalance();
         console.log('Krediti pirms:', before.toString());
 
@@ -48,6 +75,7 @@ app.get('/api/topup-credits', async (req, res) => {
             const txIdMatch = topUpError.message.match(/0x[a-fA-F0-9]{64}/);
             if (txIdMatch) {
                 console.log('Atkartoti iesniedz transakciju:', txIdMatch[0]);
+                await new Promise(r => setTimeout(r, 5000));
                 await turbo.submitFundTransaction({ txId: txIdMatch[0] });
             } else {
                 throw topUpError;
@@ -60,6 +88,8 @@ app.get('/api/topup-credits', async (req, res) => {
         return res.json({
             success: true, address,
             topUpAmount: topUpAmountEth + ' ETH (Base Sepolia)',
+            creditsBefore: before.toString(),
+            creditsAfter: after.toString(),
             creditsAdded: (after - before).toString()
         });
 
