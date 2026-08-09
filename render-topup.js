@@ -42,7 +42,17 @@ app.get('/api/topup-credits', async (req, res) => {
         const { winc: before } = await turbo.getBalance();
         console.log('Krediti pirms:', before.toString());
 
-        await turbo.topUpWithTokens({ tokenAmount: topUpAmountWei });
+        try {
+            await turbo.topUpWithTokens({ tokenAmount: topUpAmountWei });
+        } catch (topUpError) {
+            const txIdMatch = topUpError.message.match(/0x[a-fA-F0-9]{64}/);
+            if (txIdMatch) {
+                console.log('Atkartoti iesniedz transakciju:', txIdMatch[0]);
+                await turbo.submitFundTransaction({ txId: txIdMatch[0] });
+            } else {
+                throw topUpError;
+            }
+        }
         
         const { winc: after } = await turbo.getBalance();
         console.log('Krediti pec:', after.toString());
