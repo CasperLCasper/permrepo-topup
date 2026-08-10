@@ -2,26 +2,27 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
+const { ethers } = require('ethers');
 
 const app = express();
 
-// 1. Piesaista CORS un apstrādā JSON datus
+// Starpprogrammatūra (Middleware)
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 2. Pasniedz statiskos HTML/JS/CSS failus no "public" mapes
+// Statisko failu (HTML, CSS, JS) nodrošināšana no "public" mapes
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 const RPC_URL = 'https://sepolia.base.org';
 const ARWEAVE_STORAGE_KEY = process.env.ARWEAVE_STORAGE_KEY;
 
-// 3. Saknes maršruts — atver storage-pay.html
+// 1. Sākuma maršruts — atver public/storage-pay.html
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'storage-pay.html'));
 });
 
-// API augšupielādes maršruts
+// 2. API — Augšupielāde uz Arweave/AR.IO Sandbox
 app.post('/api/upload', async (req, res) => {
     try {
         if (!ARWEAVE_STORAGE_KEY) {
@@ -59,13 +60,17 @@ app.post('/api/upload', async (req, res) => {
             uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
         }
 
-        // Manifesta izveide
+        // Path Manifest izveide un augšupielāde
         const manifest = {
-            manifest: 'arweave/paths', version: '0.2.0',
-            index: { path: 'README.md' }, paths: {},
+            manifest: 'arweave/paths',
+            version: '0.2.0',
+            index: { path: 'README.md' },
+            paths: {},
             metadata: { repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
         };
-        for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
+        for (const f of uploadResults) {
+            manifest.paths[f.path] = { id: f.txId };
+        }
 
         const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
         const manifestResult = await turbo.upload({
@@ -93,4 +98,56 @@ app.post('/api/upload', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Serveris klausās uz porta ${PORT}`));
+// 3. API — Kredītu papildināšana (Top-Up)
+app.get('/api/topup-credits', async (req, res) => {
+    try {
+        if (!ARWEAVE_STORAGE_KEY) {
+            return res.status(500).json({ error: 'ARWEAVE_STORAGE_KEY not configured' });
+        }
+
+        const topUpAmountEth = parseFloat(process.env.TOP_UP_AMOUNT || '0.01');
+        const topUpAmountWei = ethers.parseEther(topUpAmountEth.toString());
+
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const wallet = new ethers.Wallet(ARWEAVE_STORAGE_KEY, provider);
+        const address = await wallet.getAddress();
+        const ethBalance = await provider.getBalance(address);
+
+        if (ethBalance < topUpAmountWei) {
+            return res.status(400).json({
+                error: 'Nepietiekami ETH.',
+                address,
+                balance: ethers.formatEther(ethBalance)
+            });
+        }
+
+        const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
+        const turbo = TurboFactory.authenticated({
+            signer,
+            token: 'base-eth',
+            gatewayUrl: RPC_URL,
+            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
+            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
+        });
+
+        const { winc: before } = await turbo.getBalance();
+        await turbo.topUpWithTokens({ tokenAmount: topUpAmountWei });
+        const { winc: after } = await turbo.getBalance();
+
+        return res.json({
+            success: true,
+            address,
+            topUpAmount: topUpAmountEth + ' ETH (Base Sepolia)',
+            creditsAdded: (after - before).toString()
+        });
+
+    } catch (error) {
+        console.error('Topup error:', error.message);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+// Servera palaišana
+app.listen(PORT, () => {
+    console.log(`Serveris darbojas uz porta ${PORT}`);
+});
