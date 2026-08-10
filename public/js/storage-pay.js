@@ -128,7 +128,7 @@ async function signAndUpload() {
 
         const result = await response.json();
 
-        // 3. Blockchain ieraksts
+        // 3. Blockchain ieraksts ar EIP-712 parakstu
         button.textContent = 'Ieraksta blockchain...';
         setStatus('3/5: Apstiprini blockchain ierakstu MetaMask...');
 
@@ -136,43 +136,54 @@ async function signAndUpload() {
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        console.log('=== BLOCKCHAIN DEBUG ===');
-        console.log('repo:', repo);
-        console.log('userAddress:', userAddress);
+        const manifestHash = ethers.id(result.manifestTxId);
+        const merkleRoot = ethers.id(result.manifestTxId);
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
 
         const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
-        console.log('repoHash:', repoHash);
-
         const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
         const tokenId = await nftReadContract.repositoryTokens(repoHash);
-        console.log('tokenId:', tokenId, 'type:', typeof tokenId, 'isZero:', tokenId === 0n);
 
         if (tokenId && tokenId !== 0n) {
-            console.log('Token ID ir derigs, turpinam ar addBackup...');
-            
             try {
-                const manifestHash = ethers.id(result.manifestTxId);
-                const merkleRoot = ethers.id(result.manifestTxId);
-                const deadline = Math.floor(Date.now() / 1000) + 3600;
+                const backupCountABI = ["function backupCount(uint256) view returns (uint256)"];
+                const backupCountContract = new ethers.Contract(NFT_ADDRESS, backupCountABI, provider);
+                const backupNumber = await backupCountContract.backupCount(tokenId);
                 
-                console.log('manifestHash:', manifestHash);
-                console.log('merkleRoot:', merkleRoot);
-                console.log('deadline:', deadline);
-
-                const addBackupMessage = [
-                    'PermRepo Blockchain Record',
-                    `Repository: ${repo}`,
-                    `Manifest: ${result.manifestTxId}`,
-                    `Deadline: ${deadline}`
-                ].join('\n');
+                const nonceABI = ["function nonces(uint256) view returns (uint256)"];
+                const nonceContract = new ethers.Contract(NFT_ADDRESS, nonceABI, provider);
+                const nonce = await nonceContract.nonces(tokenId);
                 
-                console.log('Signejam addBackupMessage...');
-                const addBackupSignature = await signer.signMessage(addBackupMessage);
-                console.log('addBackupSignature:', addBackupSignature.substring(0, 20) + '...');
+                const domain = {
+                    name: 'PermRepo',
+                    version: '1',
+                    chainId: parseInt(CHAIN_ID, 16),
+                    verifyingContract: NFT_ADDRESS
+                };
+                
+                const types = {
+                    AddBackup: [
+                        { name: 'tokenId', type: 'uint256' },
+                        { name: 'backupNumber', type: 'uint256' },
+                        { name: 'manifestHash', type: 'bytes32' },
+                        { name: 'merkleRoot', type: 'bytes32' },
+                        { name: 'deadline', type: 'uint256' },
+                        { name: 'nonce', type: 'uint256' }
+                    ]
+                };
+                
+                const value = {
+                    tokenId: tokenId.toString(),
+                    backupNumber: (backupNumber + 1n).toString(),
+                    manifestHash: manifestHash,
+                    merkleRoot: merkleRoot,
+                    deadline: deadline,
+                    nonce: nonce.toString()
+                };
+                
+                const addBackupSignature = await signer.signTypedData(domain, types, value);
                 
                 const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, signer);
-                console.log('Sucam addBackup transakciju...');
-                
                 const tx = await nftWriteContract.addBackup(
                     tokenId,
                     manifestHash,
@@ -182,18 +193,13 @@ async function signAndUpload() {
                     addBackupSignature
                 );
                 
-                console.log('TX hash:', tx.hash);
                 setStatus('3/5: Gaida blockchain transakcijas apstiprinajumu...');
+                await tx.wait();
+                console.log('Blockchain ieraksts veiksmigs!', tx.hash);
                 
-                const receipt = await tx.wait();
-                console.log('Blockchain ieraksts veiksmigs! Bloks:', receipt.blockNumber);
             } catch (blockchainError) {
                 console.error('Blockchain ieraksts neizdevas:', blockchainError);
-                console.error('Error message:', blockchainError.message);
-                console.error('Error code:', blockchainError.code);
             }
-        } else {
-            console.warn('tokenId nav derigs — izlaižam blockchain ierakstu');
         }
 
         // 4. Paraksts
@@ -236,7 +242,6 @@ async function signAndUpload() {
         }, 1500);
 
     } catch (e) {
-        console.error('GALVENA KLUDA:', e);
         if (e.code === 'ACTION_REJECTED') {
             showError('Transakcija/Paraksts atcelts MetaMask loga.');
         } else {
