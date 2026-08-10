@@ -140,13 +140,21 @@ async function signAndUpload() {
         const merkleRoot = ethers.id(result.manifestTxId);
         const deadline = Math.floor(Date.now() / 1000) + 3600;
 
-        // Iegust tokenId no NFT liguma
         const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
         const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
         const tokenId = await nftReadContract.repositoryTokens(repoHash);
 
         if (tokenId && tokenId !== 0n) {
             try {
+                const addBackupMessage = [
+                    'PermRepo Blockchain Record',
+                    `Repository: ${repo}`,
+                    `Manifest: ${result.manifestTxId}`,
+                    `Deadline: ${deadline}`
+                ].join('\n');
+                
+                const addBackupSignature = await signer.signMessage(addBackupMessage);
+                
                 const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, signer);
                 const tx = await nftWriteContract.addBackup(
                     tokenId,
@@ -154,8 +162,10 @@ async function signAndUpload() {
                     merkleRoot,
                     `ar://${result.manifestTxId}`,
                     deadline,
-                    '0x' + '00'.repeat(65)
+                    addBackupSignature
                 );
+                
+                setStatus('3/5: Gaida blockchain transakcijas apstiprinajumu...');
                 await tx.wait();
                 console.log('Blockchain ieraksts veiksmigs!', tx.hash);
             } catch (blockchainError) {
