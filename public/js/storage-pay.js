@@ -1,7 +1,12 @@
 import { ethers } from 'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js';
 
-const CHAIN_ID = '0x14a34'; // Base Sepolia
+const CHAIN_ID = '0x14a34';
 const RENDER_URL = window.location.origin;
+const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
+const NFT_ABI = [
+    "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external",
+    "function repositoryTokens(bytes32 repoHash) external view returns (uint256)"
+];
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
@@ -24,13 +29,13 @@ async function init() {
             const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
             document.getElementById('totalSize').textContent = `${(totalSize / 1024).toFixed(1)} KB`;
         } catch (e) {
-            console.error('Neizdevās noparsēt failus no URL:', e);
+            console.error('Neizdevas noparset failus no URL:', e);
             filesToUpload = [];
         }
     }
     
     if (!window.ethereum) {
-        showError('Lūdzu instalē MetaMask vai citu Web3 maku, lai turpinātu.');
+        showError('Ludzu instale MetaMask vai citu Web3 maku, lai turpinatu.');
         return;
     }
     
@@ -42,33 +47,32 @@ async function init() {
         
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = 'Parakstīt un Augšupielādēt';
+        button.textContent = 'Parakstit un Augsupieladet';
         button.onclick = signAndUpload;
         
-        setStatus('Gatavs augšupielādei');
+        setStatus('Gatavs augsupieladei');
     } catch (e) {
-        showError('Kļūda mainot tīklu: ' + (e.message || 'Nezināma kļūda'));
+        showError('Kluda mainot tiklu: ' + (e.message || 'Nezinama kluda'));
     }
 }
 
 async function signAndUpload() {
     let repo = document.getElementById('repoInput').value.trim();
     
-    // Drošāka repozitorija nosaukuma iegūšana (pat ja ielīmē pilnu URL)
     repo = repo.replace(/^https?:\/\/(www\.)?github\.com\//i, '');
     repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//i, '');
     const repoParts = repo.split('/');
     if (repoParts.length >= 2) {
-        repo = `${repoParts[0]}/${repoParts[1]}`; // Paņem tikai lietotajs/repo
+        repo = `${repoParts[0]}/${repoParts[1]}`;
     }
     
     if (!repo || !repo.includes('/')) {
-        showError('Lūdzu, ievadi pareizu repozitorija nosaukumu (piem., lietotajs/repo)');
+        showError('Ludzu, ievadi pareizu repozitorija nosaukumu (piem., lietotajs/repo)');
         return;
     }
 
     if (filesToUpload.length === 0) {
-        showError('Nav atpazītu failu augšupielādei.');
+        showError('Nav atpazitu failu augsupieladei.');
         return;
     }
 
@@ -76,8 +80,9 @@ async function signAndUpload() {
     button.disabled = true;
 
     try {
-        button.textContent = 'Lejupielādē failus...';
-        setStatus('1/3: Lejupielādē failus no GitHub...');
+        // 1. Lejupielade
+        button.textContent = 'Lejupielade failus...';
+        setStatus('1/5: Lejupielade failus no GitHub...');
 
         for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
@@ -86,24 +91,23 @@ async function signAndUpload() {
                 const response = await fetch(rawUrl);
                 if (response.ok) {
                     file.content = await response.text();
-                } else {
-                    console.warn(`Nevar lejupielādēt ${file.path} (Statuss: ${response.status})`);
                 }
             } catch (e) {
-                console.warn('Tīkla kļūda lejupielādējot:', file.path);
+                console.warn('Nevar lejupieladet:', file.path);
             }
         }
 
         const filesWithContent = filesToUpload.filter(f => f.content != null);
         if (filesWithContent.length === 0) {
-            showError('Neizdevās lejupielādēt nevienu failu no GitHub (pārbaudi repozitorija nosaukumu un branch "main").');
+            showError('Neizdevas lejupieladet nevienu failu.');
             button.disabled = false;
-            button.textContent = 'Mēģināt vēlreiz';
+            button.textContent = 'Meginat velreiz';
             return;
         }
 
-        button.textContent = 'Augšupielādē Arweave...';
-        setStatus('2/3: Sūta uz Render serveri augšupielādei...');
+        // 2. Augsupielade
+        button.textContent = 'Augsupielade Arweave...';
+        setStatus('2/5: Augsupielade uz Arweave...');
 
         const response = await fetch(`${RENDER_URL}/api/upload`, {
             method: 'POST',
@@ -112,7 +116,7 @@ async function signAndUpload() {
         });
 
         if (!response.ok) {
-            let errMsg = 'Servera kļūda';
+            let errMsg = 'Servera kluda';
             try {
                 const errJson = await response.json();
                 errMsg = errJson.error || errMsg;
@@ -124,12 +128,44 @@ async function signAndUpload() {
 
         const result = await response.json();
 
-        button.textContent = 'Paraksti autorizāciju...';
-        setStatus('3/3: Lūdzu apstiprini (Sign) MetaMask logā...');
+        // 3. Blockchain ieraksts
+        button.textContent = 'Ieraksta blockchain...';
+        setStatus('3/5: Apstiprini blockchain ierakstu MetaMask...');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
+
+        const manifestHash = ethers.id(result.manifestTxId);
+        const merkleRoot = ethers.id(result.manifestTxId);
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+        // Iegust tokenId no NFT liguma
+        const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
+        const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
+        const tokenId = await nftReadContract.repositoryTokens(repoHash);
+
+        if (tokenId && tokenId !== 0n) {
+            try {
+                const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, signer);
+                const tx = await nftWriteContract.addBackup(
+                    tokenId,
+                    manifestHash,
+                    merkleRoot,
+                    `ar://${result.manifestTxId}`,
+                    deadline,
+                    '0x' + '00'.repeat(65)
+                );
+                await tx.wait();
+                console.log('Blockchain ieraksts veiksmigs!', tx.hash);
+            } catch (blockchainError) {
+                console.warn('Blockchain ieraksts neizdevas:', blockchainError.message);
+            }
+        }
+
+        // 4. Paraksts
+        button.textContent = 'Paraksti autorizaciju...';
+        setStatus('4/5: Apstiprini parakstu MetaMask...');
 
         const timestamp = Math.floor(Date.now() / 1000);
         const message = [
@@ -143,6 +179,9 @@ async function signAndUpload() {
 
         const signature = await signer.signMessage(message);
         
+        // 5. Izveidot Issue
+        setStatus('5/5: Izveido GitHub Issue...');
+
         const payload = {
             address: userAddress, 
             signature, 
@@ -157,21 +196,20 @@ async function signAndUpload() {
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
         const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
 
-        setStatus('Gatavs! Novirzam uz GitHub Issue izveidi...');
+        setStatus('Gatavs! Novirzam uz GitHub...');
         
-        // Pagaidām sekundi, lai lietotājs redz veiksmīgo statusu
         setTimeout(() => {
             window.location.href = issueUrl;
         }, 1500);
 
     } catch (e) {
         if (e.code === 'ACTION_REJECTED') {
-            showError('Transakcija/Paraksts atcelts MetaMask logā.');
+            showError('Transakcija/Paraksts atcelts MetaMask loga.');
         } else {
-            showError('Kļūda: ' + e.message);
+            showError('Kluda: ' + e.message);
         }
         button.disabled = false;
-        button.textContent = 'Mēģināt vēlreiz';
+        button.textContent = 'Meginat velreiz';
     }
 }
 
@@ -185,5 +223,4 @@ function showError(msg) {
     if (el) el.textContent = msg; 
 }
 
-// Sākam procesu
 init();
