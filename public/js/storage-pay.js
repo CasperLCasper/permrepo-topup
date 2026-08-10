@@ -1,147 +1,95 @@
-// ============================================
-// PERMAREPO GLABASANAS APMAKSAS LAPA
-// Sutra failus uz Render serveri augsupieladei
-// ============================================
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
+const { ethers } = require('ethers');
 
-const CHAIN_ID = '0x14a34';
+const app = express();
 
-const params = new URLSearchParams(window.location.search);
-const repoFromUrl = params.get('repo') || '';
-const filesParam = params.get('files') || '';
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-let filesToUpload = [];
+const PORT = process.env.PORT || 3000;
+const RPC_URL = 'https://sepolia.base.org';
 
-async function init() {
-    document.getElementById('repoInput').value = repoFromUrl;
-    document.getElementById('timestamp').textContent = new Date().toLocaleString();
-    
-    if (filesParam) {
-        try {
-            filesToUpload = JSON.parse(decodeURIComponent(filesParam));
-            document.getElementById('fileCount').textContent = filesToUpload.length + ' faili';
-            const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
-            document.getElementById('totalSize').textContent = `${(totalSize / 1024).toFixed(1)} KB`;
-        } catch (e) {
-            filesToUpload = [];
+// Izveido pagaidu maku atmiņā — nav nepieciešams ARWEAVE_STORAGE_KEY vides mainīgais
+const randomWallet = ethers.Wallet.createRandom();
+const signer = new EthereumSigner(randomWallet.privateKey);
+
+// Galvenās lapas maršruts (novērš "Cannot GET /")
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'storage-pay.html'));
+});
+
+// Augšupielādes API
+app.post('/api/upload', async (req, res) => {
+    try {
+        const { files, repo } = req.body;
+        if (!files || !files.length) {
+            return res.status(400).json({ error: 'Nav failu' });
         }
-    }
-    
-    if (!window.ethereum) {
-        showError('Instale MetaMask vai citu kripto maku');
-        return;
-    }
-    
-    try {
-        await ethereum.request({ 
-            method: 'wallet_switchEthereumChain', 
-            params: [{ chainId: CHAIN_ID }] 
+
+        const turbo = TurboFactory.authenticated({
+            signer,
+            token: 'base-eth',
+            gatewayUrl: RPC_URL,
+            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
+            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
         });
-        
-        const button = document.getElementById('payButton');
-        button.disabled = false;
-        button.textContent = 'Parakstit un Augsupieladet';
-        button.onclick = signAndUpload;
-        
-        setStatus('Gatavs augsupieladei');
-    } catch (e) {
-        showError('Kluda: ' + e.message);
-    }
-}
 
-async function signAndUpload() {
-    let repo = document.getElementById('repoInput').value.trim();
-    repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
-    repo = repo.replace(/^https?:\/\/.+\//, '');
-    
-    if (!repo || repo.includes('http') || !repo.includes('/')) {
-        showError('Ludzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
-        return;
-    }
-
-    if (filesToUpload.length === 0) {
-        showError('Nav failu augsupieladei');
-        return;
-    }
-
-    const button = document.getElementById('payButton');
-    button.disabled = true;
-
-    try {
-        button.textContent = 'Lejupielade failus...';
-        setStatus('1/3: Lejupielade failus no GitHub...');
-
-        for (let i = 0; i < filesToUpload.length; i++) {
-            const file = filesToUpload[i];
-            try {
-                const rawUrl = `https://raw.githubusercontent.com/${repo}/main/${file.path}`;
-                const response = await fetch(rawUrl);
-                if (response.ok) {
-                    file.content = await response.text();
+        const uploadResults = [];
+        for (const file of files) {
+            const fileData = Buffer.from(file.content, 'utf-8');
+            const result = await turbo.upload({
+                data: fileData,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Repo', value: repo },
+                        { name: 'File-Path', value: file.path },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
                 }
-            } catch (e) {
-                console.warn('Nevar lejupieladet:', file.path);
+            });
+            uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
+        }
+
+        const manifest = {
+            manifest: 'arweave/paths',
+            version: '0.2.0',
+            index: { path: 'README.md' },
+            paths: {},
+            metadata: { repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
+        };
+        for (const f of uploadResults) {
+            manifest.paths[f.path] = { id: f.txId };
+        }
+
+        const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
+        const manifestResult = await turbo.upload({
+            data: manifestData,
+            dataItemOpts: {
+                tags: [
+                    { name: 'App-Name', value: 'PermRepo' },
+                    { name: 'Type', value: 'path-manifest' },
+                    { name: 'Repo', value: repo },
+                    { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                ]
             }
-        }
-
-        const filesWithContent = filesToUpload.filter(f => f.content);
-        if (filesWithContent.length === 0) {
-            showError('Neizdevas lejupieladet nevienu failu.');
-            button.disabled = false;
-            return;
-        }
-
-        button.textContent = 'Augsupielade...';
-        setStatus('2/3: Augsupielade uz Arweave...');
-
-        const response = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesWithContent, repo })
         });
 
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || 'Augsupielade neizdevas');
-        }
+        return res.json({
+            success: true,
+            uploadedFiles: uploadResults,
+            manifestTxId: manifestResult.id
+        });
 
-        const result = await response.json();
-
-        button.textContent = 'Paraksti autorizaciju...';
-        setStatus('3/3: Paraksti ar MetaMask...');
-
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const userAddress = await signer.getAddress();
-
-        const timestamp = Math.floor(Date.now() / 1000);
-        const message = [
-            'PermRepo Backup Authorization',
-            `Repository: ${repo}`, `Timestamp: ${timestamp}`, `Address: ${userAddress}`,
-            `UploadedFiles: ${result.uploadedFiles.length}`, `ManifestTxId: ${result.manifestTxId}`
-        ].join('\n');
-
-        const signature = await signer.signMessage(message);
-        const payload = {
-            address: userAddress, signature, message, timestamp,
-            uploadedFiles: result.uploadedFiles, manifestTxId: result.manifestTxId
-        };
-
-        const jsonBody = JSON.stringify(payload, null, 2);
-        const body = '```json\n' + jsonBody + '\n```';
-        const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
-        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
-
-        setStatus('Gatavs! Novirzam uz GitHub...');
-        window.location.href = issueUrl;
-
-    } catch (e) {
-        if (e.code === 'ACTION_REJECTED') showError('Transakcija atcelta');
-        else showError('Kluda: ' + e.message);
-        button.disabled = false;
-        button.textContent = 'Parakstit un Augsupieladet';
+    } catch (error) {
+        console.error('Upload error:', error.message);
+        return res.status(500).json({ error: error.message });
     }
-}
+});
 
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
-function showError(msg) { document.getElementById('error').textContent = msg; }
-init();
+app.listen(PORT, () => console.log(`Serveris darbojas uz porta ${PORT}`));
