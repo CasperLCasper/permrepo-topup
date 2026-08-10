@@ -13,6 +13,21 @@ const PORT = process.env.PORT || 3000;
 const RPC_URL = 'https://sepolia.base.org';
 const ARWEAVE_STORAGE_KEY = process.env.ARWEAVE_STORAGE_KEY;
 
+// Statiskie faili
+app.get('/storage-pay.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'storage-pay.html'));
+});
+
+app.get('/js/storage-pay.js', (req, res) => {
+    res.type('application/javascript');
+    res.sendFile(path.join(__dirname, 'public', 'js', 'storage-pay.js'));
+});
+
+app.get('/css/style.css', (req, res) => {
+    res.type('text/css');
+    res.sendFile(path.join(__dirname, 'public', 'css', 'style.css'));
+});
+
 // API — augsupielade
 app.post('/api/upload', async (req, res) => {
     try {
@@ -126,11 +141,6 @@ app.get('/api/topup-credits', async (req, res) => {
         console.error('Topup error:', error.message);
         return res.status(500).json({ error: error.message });
     }
-});
-
-// Serve statisko lapu
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'storage-pay.html'));
 });
 
 app.listen(PORT, () => console.log(`Serveris klausas uz porta ${PORT}`));
