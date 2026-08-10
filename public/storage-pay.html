@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PermRepo — Apmaksāt Glabāšanu</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="container text-center">
+    <h1>💳 Apmaksāt Glabāšanu</h1>
+    <p class="subtitle">Maksā ar MetaMask un augšupielādē failus Arweave</p>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Repo</span>
+        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="">
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Laika zīmogs</span>
+        <span class="info-value" id="timestamp">-</span>
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Faili</span>
+        <span class="info-value" id="fileCount">Nav norādīti</span>
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Kopējais izmērs</span>
+        <span class="info-value" id="totalSize">Aprēķina...</span>
+    </div>
+
+    <div class="info-row text-left">
+        <span class="info-label">Valūta</span>
+        <select id="currencySelect" style="padding: 5px; border-radius: 4px;">
+            <option value="base-eth">Base ETH</option>
+            <option value="base-usdc">Base USDC</option>
+        </select>
+    </div>
+    
+    <button id="payButton" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
+    <div class="status" id="status"></div>
+    <div class="error" id="error"></div>
+</div>
+<script type="module" src="js/storage-pay.js"></script>
+</body>
+</html>
