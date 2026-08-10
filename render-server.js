@@ -1,28 +1,32 @@
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
 const { ethers } = require('ethers');
 
 const app = express();
-
-// Starpprogrammatūra (Middleware)
-app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-
-// Statisko failu (HTML, CSS, JS) nodrošināšana no "public" mapes
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 const RPC_URL = 'https://sepolia.base.org';
 const ARWEAVE_STORAGE_KEY = process.env.ARWEAVE_STORAGE_KEY;
 
-// 1. Sākuma maršruts — atver public/storage-pay.html
-app.get('/', (req, res) => {
+// Statiskie faili
+app.get('/storage-pay.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'storage-pay.html'));
 });
 
-// 2. API — Augšupielāde uz Arweave/AR.IO Sandbox
+app.get('/js/storage-pay.js', (req, res) => {
+    res.type('application/javascript');
+    res.sendFile(path.join(__dirname, 'public', 'js', 'storage-pay.js'));
+});
+
+app.get('/css/style.css', (req, res) => {
+    res.type('text/css');
+    res.sendFile(path.join(__dirname, 'public', 'css', 'style.css'));
+});
+
+// API — augsupielade
 app.post('/api/upload', async (req, res) => {
     try {
         if (!ARWEAVE_STORAGE_KEY) {
@@ -36,9 +40,7 @@ app.post('/api/upload', async (req, res) => {
 
         const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
         const turbo = TurboFactory.authenticated({
-            signer,
-            token: 'base-eth',
-            gatewayUrl: RPC_URL,
+            signer, token: 'base-eth', gatewayUrl: RPC_URL,
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
             uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
         });
@@ -60,17 +62,13 @@ app.post('/api/upload', async (req, res) => {
             uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
         }
 
-        // Path Manifest izveide un augšupielāde
+        // Manifests
         const manifest = {
-            manifest: 'arweave/paths',
-            version: '0.2.0',
-            index: { path: 'README.md' },
-            paths: {},
+            manifest: 'arweave/paths', version: '0.2.0',
+            index: { path: 'README.md' }, paths: {},
             metadata: { repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
         };
-        for (const f of uploadResults) {
-            manifest.paths[f.path] = { id: f.txId };
-        }
+        for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
 
         const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
         const manifestResult = await turbo.upload({
@@ -98,7 +96,7 @@ app.post('/api/upload', async (req, res) => {
     }
 });
 
-// 3. API — Kredītu papildināšana (Top-Up)
+// API — topup krediti
 app.get('/api/topup-credits', async (req, res) => {
     try {
         if (!ARWEAVE_STORAGE_KEY) {
@@ -114,18 +112,15 @@ app.get('/api/topup-credits', async (req, res) => {
         const ethBalance = await provider.getBalance(address);
 
         if (ethBalance < topUpAmountWei) {
-            return res.status(400).json({
+            return res.status(400).json({ 
                 error: 'Nepietiekami ETH.',
-                address,
-                balance: ethers.formatEther(ethBalance)
+                address, balance: ethers.formatEther(ethBalance)
             });
         }
 
         const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
         const turbo = TurboFactory.authenticated({
-            signer,
-            token: 'base-eth',
-            gatewayUrl: RPC_URL,
+            signer, token: 'base-eth', gatewayUrl: RPC_URL,
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
             uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
         });
@@ -135,8 +130,7 @@ app.get('/api/topup-credits', async (req, res) => {
         const { winc: after } = await turbo.getBalance();
 
         return res.json({
-            success: true,
-            address,
+            success: true, address,
             topUpAmount: topUpAmountEth + ' ETH (Base Sepolia)',
             creditsAdded: (after - before).toString()
         });
@@ -147,7 +141,4 @@ app.get('/api/topup-credits', async (req, res) => {
     }
 });
 
-// Servera palaišana
-app.listen(PORT, () => {
-    console.log(`Serveris darbojas uz porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Serveris klausas uz porta ${PORT}`));
