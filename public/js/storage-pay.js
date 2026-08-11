@@ -137,9 +137,10 @@ async function signAndUpload() {
         const paths = {};
         for (const file of filesWithContent) {
             const fileData = textEncoder.encode(file.content);
+            const blob = new Blob([fileData]);
             const result = await turbo.uploadFile({
-                fileStreamFactory: () => fileData,
-                fileSizeFactory: () => fileData.length,
+                fileStreamFactory: () => blob.stream(),
+                fileSizeFactory: () => blob.size,
                 dataItemOpts: {
                     tags: [
                         { name: 'App-Name', value: 'PermRepo' },
@@ -164,9 +165,10 @@ async function signAndUpload() {
         if (!paths['README.md']) manifest.index.path = Object.keys(paths)[0];
         
         const manifestData = textEncoder.encode(JSON.stringify(manifest));
+        const manifestBlob = new Blob([manifestData]);
         const manifestResult = await turbo.uploadFile({
-            fileStreamFactory: () => manifestData,
-            fileSizeFactory: () => manifestData.length,
+            fileStreamFactory: () => manifestBlob.stream(),
+            fileSizeFactory: () => manifestBlob.size,
             dataItemOpts: {
                 tags: [
                     { name: 'App-Name', value: 'PermRepo' },
