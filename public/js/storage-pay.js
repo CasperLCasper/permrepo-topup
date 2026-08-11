@@ -80,38 +80,49 @@ async function signAndUpload() {
 
     const button = document.getElementById('payButton');
     button.disabled = true;
-    showError(''); // Notīra iepriekšējās kļūdas
+    showError('');
 
     try {
-        // 1. LEJUPIELĀDE NO GITHUB
+        // 1. LEJUPIELĀDĒ FAILUS NO GITHUB (Ar 5 sekunžu abort controller katram pieprasījumam)
         button.textContent = 'Lejupielādē failus...';
         setStatus('1/6: Lejupielādē koda failus no GitHub...');
 
         for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
-            try {
-                const rawUrl = `https://raw.githubusercontent.com/${repo}/main/${file.path}`;
-                const response = await fetch(rawUrl);
-                if (response.ok) {
-                    file.content = await response.text();
+            let downloaded = false;
+
+            for (const branch of ['main', 'master']) {
+                if (downloaded) break;
+                try {
+                    const rawUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${file.path}`;
+                    
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+                    const response = await fetch(rawUrl, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+
+                    if (response.ok) {
+                        file.content = await response.text();
+                        downloaded = true;
+                    }
+                } catch (e) {
+                    console.warn(`Neizdevās lejupielādēt no ${branch}: ${file.path}`);
                 }
-            } catch (e) {
-                console.warn('Nevar lejupielādēt:', file.path);
             }
         }
 
         const filesWithContent = filesToUpload.filter(f => f.content != null);
         if (filesWithContent.length === 0) {
-            throw new Error('Neizdevās lejupielādēt nevienu failu no GitHub.');
+            throw new Error('Neizdevās lejupielādēt failus no GitHub. Pārbaudi, vai repozitorijs ir publisks un zars ir main/master.');
         }
 
-        // 2. SAGATAVO METAMASK UN TURBO SDK
+        // 2. SAGATAVO METAMASK UN TURBO SDK AR AR-IO VĀRTEJĀM
         setStatus('2/6: Pārbauda glabāšanas izmaksas...');
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        // Ethers v6 un Turbo SDK savietojamības fiksējums
         if (typeof signer.signTypedData === 'function' && !signer._signTypedData) {
             signer._signTypedData = signer.signTypedData.bind(signer);
         }
@@ -123,7 +134,6 @@ async function signAndUpload() {
             paymentServiceUrl: 'https://payment.services.ar-io.dev'
         });
 
-        // Aprēķina kopējo baitos (Faili + Manifesta rezerve)
         const textEncoder = new TextEncoder();
         let totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
         totalBytes += 2048; 
@@ -136,7 +146,7 @@ async function signAndUpload() {
 
         // 3. APMAKSĀ JA NEPIECIEŠAMS
         if (costInfo && parseInt(currentBalance) < parseInt(costInfo.winc)) {
-            const amountToPay = (parseFloat(costInfo.tokenAmount) * 1.05).toFixed(6); // 5% drošības rezerve
+            const amountToPay = (parseFloat(costInfo.tokenAmount) * 1.05).toFixed(6);
             setStatus(`3/6: Nepietiek kredītu. Apmaksā ${amountToPay} ${selectedCurrency.toUpperCase()} MetaMask logā...`);
             button.textContent = 'Apstiprini maksājumu...';
             
@@ -146,7 +156,7 @@ async function signAndUpload() {
             });
             setStatus('Glabāšana apmaksāta! Turpinām ar augšupielādi...');
         } else {
-            setStatus('3/6: Izmanto bezmaksas kvotu / esošos Turbo kredītus...');
+            setStatus('3/6: Izmanto esošos Turbo kredītus...');
         }
 
         // 4. AUGŠUPIELĀDĒ FAILUS ARWEAVE
@@ -169,7 +179,7 @@ async function signAndUpload() {
             file.txId = receipt.id;
         }
 
-        // 5. IZVEIDO PATH MANIFESTU
+        // 5. IZVEIDO MANIFESTU
         setStatus('5/6: Veido struktūras manifestu...');
         const manifest = {
             manifest: "arweave/paths",
@@ -257,7 +267,7 @@ async function signAndUpload() {
             }
         }
 
-        // 7. PARAKSTS UN GITHUB ISSUE
+        // 7. GITHUB ISSUE IZVEIDE
         setStatus('Ģenerē GitHub atskaiti...');
         button.textContent = 'Veido Issue...';
 
