@@ -101,7 +101,7 @@ async function signAndUpload() {
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const burnerWallet = ethers.Wallet.createRandom();
+        const burnerWallet = ethers.Wallet.createRandom().connect(provider);
         const burnerPrivateKey = burnerWallet.privateKey;
 
         const turboSigner = new EthereumSigner(burnerPrivateKey);
@@ -119,18 +119,16 @@ async function signAndUpload() {
         button.textContent = 'Apstiprini maksajumu...';
 
         const textEncoder = new TextEncoder();
-        let totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
-        const uploadCosts = await turbo.getUploadCosts({ bytes: totalBytes });
-        const costInfo = uploadCosts[0];
-
-        if (costInfo) {
-            const amount = ethers.parseEther(costInfo.tokenAmount);
-            const tx = await signer.sendTransaction({
-                to: burnerWallet.address,
-                value: amount
-            });
-            await tx.wait();
-        }
+        const totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
+        const estimatedCost = Math.max(0.001, totalBytes / 1000000 * 0.001);
+        const amount = ethers.parseEther(estimatedCost.toFixed(4));
+        
+        const tx = await signer.sendTransaction({
+            to: burnerWallet.address,
+            value: amount
+        });
+        await tx.wait();
+        setStatus(`Pārskaitīti ${estimatedCost.toFixed(4)} ETH uz pagaidu maku`);
 
         // 4. Augsupielade failus
         setStatus('4/6: Augsupielade failus Arweave...');
@@ -180,6 +178,21 @@ async function signAndUpload() {
             }
         });
         const manifestTxId = manifestResult.id;
+
+        // === ATMAKSĀT PĀRPALIKUMU ===
+        setStatus('Atmaksa...');
+        const remainingBalance = await provider.getBalance(burnerWallet.address);
+        const gasReserve = ethers.parseEther('0.0001');
+        
+        if (remainingBalance > gasReserve) {
+            const refundAmount = remainingBalance - gasReserve;
+            const returnTx = await burnerWallet.sendTransaction({
+                to: userAddress,
+                value: refundAmount
+            });
+            await returnTx.wait();
+            console.log(`Atmaksāts ${ethers.formatEther(refundAmount)} ETH`);
+        }
 
         // 6. Blockchain ieraksts
         setStatus('6/6: Apstiprini blockchain ierakstu...');
