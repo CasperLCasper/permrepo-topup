@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="lv">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PermRepo — Apmaksāt Glabāšanu</title>
-    <!-- Šeit ir salabota CSP rinda: pievienots 'self' pie connect-src -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh 'sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://sepolia.base.org https://mainnet.base.org https://upload.services.ar-io.dev https://payment.services.ar-io.dev https://raw.githubusercontent.com https://esm.sh https://unpkg.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
+
+    <!-- Koriģēta CSP meta rinda (izņemts frame-ancestors un sakārtots connect-src) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh 'sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://payment.services.ar-io.dev https://upload.services.ar-io.dev https://sepolia.base.org https://mainnet.base.org https://raw.githubusercontent.com https://esm.sh https://unpkg.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net wss:; img-src 'self' data:; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
