@@ -2,7 +2,6 @@ import { ethers } from 'ethers';
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 
 const CHAIN_ID = '0x14a34';
-const RENDER_URL = window.location.origin;
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external",
@@ -124,7 +123,7 @@ async function signAndUpload() {
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
         });
 
-        // 3. Parbaudam kredītus un nepieciešamības gadījumā papildinam
+        // 3. Parbaudam kreditus
         setStatus('3/6: Parbauda kreditus...');
         button.textContent = 'Parbauda kreditus...';
 
@@ -137,15 +136,15 @@ async function signAndUpload() {
 
         if (costInfo && parseInt(currentBalance) < parseInt(costInfo.winc)) {
             const token = selectedCurrency === 'base-usdc' ? 'usdc' : 'ethereum';
-            setStatus(`3/6: Nepietiek kredītu. Apstiprini maksājumu MetaMask...`);
-            button.textContent = 'Apstiprini maksājumu...';
+            setStatus(`3/6: Nepietiek kreditu. Apstiprini maksajumu MetaMask...`);
+            button.textContent = 'Apstiprini maksajumu...';
             await turbo.topUpWithTokens({
                 tokenAmount: costInfo.tokenAmount,
                 token: token
             });
-            setStatus('Kredīti papildināti! Turpinam...');
+            setStatus('Krediti papildinati! Turpinam...');
         } else {
-            setStatus('3/6: Pietiekami kredītu. Turpinam...');
+            setStatus('3/6: Pietiekami kreditu. Turpinam...');
         }
 
         // 4. Augsupielade failus
