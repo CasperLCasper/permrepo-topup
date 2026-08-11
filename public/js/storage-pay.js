@@ -1,6 +1,5 @@
 import { ethers } from 'ethers';
-import { TurboFactory } from '@ardrive/turbo-sdk';
-import { InjectedEthereumSigner } from '@dha-team/arbundles';
+import { TurboFactory, InjectedEthereumSigner } from '@ardrive/turbo-sdk';
 
 const CHAIN_ID = '0x14a34';
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
@@ -101,9 +100,7 @@ async function signAndUpload() {
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const injectedSigner = new InjectedEthereumSigner({
-            getSigner: () => signer
-        });
+        const injectedSigner = new InjectedEthereumSigner(window.ethereum);
 
         const selectedCurrency = document.getElementById('currencySelect').value;
         const turbo = TurboFactory.authenticated({
