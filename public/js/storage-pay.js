@@ -1,5 +1,5 @@
 import { ethers } from 'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js';
-import { TurboFactory, EthereumSigner } from 'https://cdn.jsdelivr.net/npm/@ardrive/turbo-sdk@1.12.0/+esm';
+import { TurboFactory, EthereumSigner } from 'https://esm.sh/@ardrive/turbo-sdk@1.12.0/web?bundle';
 
 const CHAIN_ID = '0x14a34'; // Base Sepolia (84532)
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
@@ -31,7 +31,7 @@ async function init() {
             const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
             document.getElementById('totalSize').textContent = `${(totalSize / 1024).toFixed(1)} KB`;
         } catch (e) {
-            console.error('Neizdevas noparset failus no URL:', e);
+            console.error('Neizdevās nopārsēt failus no URL:', e);
             filesToUpload = [];
         }
     }
@@ -117,7 +117,11 @@ async function signAndUpload() {
         }
 
         const turboSigner = new EthereumSigner(signer);
-        const turbo = TurboFactory.authenticated({ signer: turboSigner });
+        const turbo = TurboFactory.authenticated({ 
+            signer: turboSigner,
+            uploadServiceUrl: 'https://upload.services.ar-io.dev',
+            paymentServiceUrl: 'https://payment.services.ar-io.dev'
+        });
 
         // Aprēķina kopējo baitos (Faili + Manifesta rezerve)
         const textEncoder = new TextEncoder();
@@ -132,7 +136,7 @@ async function signAndUpload() {
 
         // 3. APMAKSĀ JA NEPIECIEŠAMS
         if (costInfo && parseInt(currentBalance) < parseInt(costInfo.winc)) {
-            const amountToPay = (parseFloat(costInfo.tokenAmount) * 1.05).toFixed(6); // 5% drošības rezerve kursa svārstībām
+            const amountToPay = (parseFloat(costInfo.tokenAmount) * 1.05).toFixed(6); // 5% drošības rezerve
             setStatus(`3/6: Nepietiek kredītu. Apmaksā ${amountToPay} ${selectedCurrency.toUpperCase()} MetaMask logā...`);
             button.textContent = 'Apstiprini maksājumu...';
             
@@ -162,7 +166,7 @@ async function signAndUpload() {
                 }
             });
             paths[file.path] = { id: receipt.id };
-            file.txId = receipt.id; // Saglabā ID priekš GitHub Issue
+            file.txId = receipt.id;
         }
 
         // 5. IZVEIDO PATH MANIFESTU
@@ -173,7 +177,7 @@ async function signAndUpload() {
             index: { path: "README.md" },
             paths: paths
         };
-        // Ja repozitorijā nav README.md, izmantojam pirmo pieejamo failu kā sākumlapu
+        
         if (!paths["README.md"]) {
             manifest.index.path = Object.keys(paths)[0];
         }
@@ -250,7 +254,6 @@ async function signAndUpload() {
                 
             } catch (blockchainError) {
                 console.error('Blockchain ieraksts neizdevās:', blockchainError);
-                // Turpinām uz GitHub Issue pat ja NFT ieraksts neizdevās
             }
         }
 
