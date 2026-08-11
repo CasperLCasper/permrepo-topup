@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
+import { TurboFactory } from '@ardrive/turbo-sdk';
 
 const CHAIN_ID = '0x14a34';
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
@@ -110,14 +110,14 @@ async function signAndUpload() {
         setStatus('2/6: Inicialize MetaMask...');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
+        await provider.send("eth_requestAccounts", []);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const turboSigner = new EthereumSigner(signer);
         const selectedCurrency = document.getElementById('currencySelect').value;
         
         const turbo = TurboFactory.authenticated({
-            signer: turboSigner,
+            signer: window.ethereum,
             token: selectedCurrency,
             uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
