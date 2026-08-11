@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 
 const CHAIN_ID = '0x14a34';
 const RENDER_URL = window.location.origin;
@@ -47,7 +48,7 @@ async function init() {
         
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = 'Parakstit un Augsupieladet';
+        button.textContent = 'Maksat ar MetaMask un Augsupieladet';
         button.onclick = signAndUpload;
         
         setStatus('Gatavs augsupieladei');
@@ -81,7 +82,7 @@ async function signAndUpload() {
     try {
         // 1. Lejupielade
         button.textContent = 'Lejupielade failus...';
-        setStatus('1/5: Lejupielade failus no GitHub...');
+        setStatus('1/6: Lejupielade failus no GitHub...');
 
         for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
@@ -105,34 +106,105 @@ async function signAndUpload() {
             return;
         }
 
-        // 2. Sutam uz Render API
-        button.textContent = 'Augsupielade Arweave...';
-        setStatus('2/5: Augsupielade uz Arweave (caur Render)...');
-
-        const response = await fetch(`${RENDER_URL}/api/upload`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesWithContent, repo })
-        });
-
-        if (!response.ok) {
-            let errMsg = 'Servera kluda';
-            try { const errJson = await response.json(); errMsg = errJson.error || errMsg; } catch {}
-            throw new Error(errMsg);
-        }
-
-        const result = await response.json();
-
-        // 3. Blockchain ieraksts ar EIP-712
-        button.textContent = 'Ieraksta blockchain...';
-        setStatus('3/5: Apstiprini blockchain ierakstu MetaMask...');
+        // 2. Savienojamies ar MetaMask un inicializejam Turbo
+        button.textContent = 'Savienojas ar MetaMask...';
+        setStatus('2/6: Inicialize MetaMask...');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const manifestHash = ethers.id(result.manifestTxId);
-        const merkleRoot = ethers.id(result.manifestTxId);
+        const turboSigner = new EthereumSigner(signer);
+        const selectedCurrency = document.getElementById('currencySelect').value;
+        
+        const turbo = TurboFactory.authenticated({
+            signer: turboSigner,
+            token: selectedCurrency,
+            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
+            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+        });
+
+        // 3. Parbaudam kredītus un nepieciešamības gadījumā papildinam
+        setStatus('3/6: Parbauda kreditus...');
+        button.textContent = 'Parbauda kreditus...';
+
+        const textEncoder = new TextEncoder();
+        let totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
+
+        const { winc: currentBalance } = await turbo.getBalance();
+        const uploadCosts = await turbo.getUploadCosts({ bytes: totalBytes });
+        const costInfo = uploadCosts[0];
+
+        if (costInfo && parseInt(currentBalance) < parseInt(costInfo.winc)) {
+            const token = selectedCurrency === 'base-usdc' ? 'usdc' : 'ethereum';
+            setStatus(`3/6: Nepietiek kredītu. Apstiprini maksājumu MetaMask...`);
+            button.textContent = 'Apstiprini maksājumu...';
+            await turbo.topUpWithTokens({
+                tokenAmount: costInfo.tokenAmount,
+                token: token
+            });
+            setStatus('Kredīti papildināti! Turpinam...');
+        } else {
+            setStatus('3/6: Pietiekami kredītu. Turpinam...');
+        }
+
+        // 4. Augsupielade failus
+        setStatus('4/6: Augsupielade failus Arweave...');
+        button.textContent = 'Augsupielade...';
+        
+        const paths = {};
+        for (const file of filesWithContent) {
+            const fileData = textEncoder.encode(file.content);
+            const result = await turbo.uploadFile({
+                fileStreamFactory: () => fileData,
+                fileSizeFactory: () => fileData.length,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Repo', value: repo },
+                        { name: 'File-Path', value: file.path },
+                        { name: 'Content-Type', value: 'text/plain' },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
+                }
+            });
+            paths[file.path] = { id: result.id };
+            file.txId = result.id;
+        }
+
+        // 5. Izveido manifestu un augsupielade
+        setStatus('5/6: Veido manifestu...');
+        button.textContent = 'Manifests...';
+
+        const manifest = {
+            manifest: 'arweave/paths', version: '0.2.0',
+            index: { path: 'README.md' }, paths: paths,
+            metadata: { repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
+        };
+        if (!paths['README.md']) manifest.index.path = Object.keys(paths)[0];
+
+        const manifestData = textEncoder.encode(JSON.stringify(manifest));
+        const manifestResult = await turbo.uploadFile({
+            fileStreamFactory: () => manifestData,
+            fileSizeFactory: () => manifestData.length,
+            dataItemOpts: {
+                tags: [
+                    { name: 'App-Name', value: 'PermRepo' },
+                    { name: 'Type', value: 'path-manifest' },
+                    { name: 'Repo', value: repo },
+                    { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                ]
+            }
+        });
+        const manifestTxId = manifestResult.id;
+
+        // 6. Blockchain ieraksts ar EIP-712
+        setStatus('6/6: Apstiprini blockchain ierakstu MetaMask...');
+        button.textContent = 'Paraksti NFT ierakstu...';
+
+        const manifestHash = ethers.id(manifestTxId);
+        const merkleRoot = ethers.id(manifestTxId);
         const deadline = Math.floor(Date.now() / 1000) + 3600;
         const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
         
@@ -171,10 +243,10 @@ async function signAndUpload() {
                 const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, signer);
                 const tx = await nftWriteContract.addBackup(
                     tokenId, manifestHash, merkleRoot,
-                    `ar://${result.manifestTxId}`, deadline, addBackupSignature
+                    `ar://${manifestTxId}`, deadline, addBackupSignature
                 );
                 
-                setStatus('3/5: Gaida blockchain transakcijas apstiprinajumu...');
+                setStatus('Gaida blockchain transakcijas apstiprinajumu...');
                 await tx.wait();
                 console.log('Blockchain ieraksts veiksmigs!', tx.hash);
             } catch (blockchainError) {
@@ -182,25 +254,22 @@ async function signAndUpload() {
             }
         }
 
-        // 4. Paraksts
-        button.textContent = 'Paraksti autorizaciju...';
-        setStatus('4/5: Apstiprini parakstu MetaMask...');
+        // 7. Izveidot Issue
+        setStatus('Genere GitHub atskaiti...');
+        button.textContent = 'Veido Issue...';
 
         const timestamp = Math.floor(Date.now() / 1000);
         const message = [
             'PermRepo Backup Authorization',
             `Repository: ${repo}`, `Timestamp: ${timestamp}`, `Address: ${userAddress}`,
-            `UploadedFiles: ${result.uploadedFiles.length}`, `ManifestTxId: ${result.manifestTxId}`
+            `UploadedFiles: ${filesWithContent.length}`, `ManifestTxId: ${manifestTxId}`
         ].join('\n');
 
         const signature = await signer.signMessage(message);
-        
-        // 5. Izveidot Issue
-        setStatus('5/5: Izveido GitHub Issue...');
-
         const payload = {
             address: userAddress, signature, message, timestamp,
-            uploadedFiles: result.uploadedFiles, manifestTxId: result.manifestTxId
+            uploadedFiles: filesWithContent.map(f => ({ path: f.path, txId: f.txId, size: f.size })),
+            manifestTxId
         };
 
         const jsonBody = JSON.stringify(payload, null, 2);
