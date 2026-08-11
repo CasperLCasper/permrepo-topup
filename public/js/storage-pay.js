@@ -1,5 +1,5 @@
 import { ethers } from 'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js';
-import { TurboFactory, EthereumSigner } from 'https://esm.sh/@ardrive/turbo-sdk@1.12.0/web';
+import { TurboFactory, EthereumSigner } from 'https://cdn.jsdelivr.net/npm/@ardrive/turbo-sdk@1.12.0/+esm';
 
 const CHAIN_ID = '0x14a34'; // Base Sepolia (84532)
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
