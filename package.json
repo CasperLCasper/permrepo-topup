@@ -1,15 +1,14 @@
 {
-  "name": "permrepo-topup",
+  "name": "permrepo-app",
   "version": "1.0.0",
-  "description": "PermRepo Turbo kredītu pirkšanas serviss (Base Sepolia)",
-  "main": "render-server.js",
+  "type": "module",
+  "main": "server.js",
   "scripts": {
-    "start": "node render-server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "@ardrive/turbo-sdk": "^1.8.0",
-    "cors": "^2.8.5",
-    "ethers": "^6.13.2",
-    "express": "^4.18.2"
+    "ethers": "^6.7.0",
+    "express": "^4.19.2"
   }
 }
