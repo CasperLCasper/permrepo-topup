@@ -1,6 +1,4 @@
 import { ethers } from 'ethers';
-import { TurboFactory } from '@ardrive/turbo-sdk/web';
-import { InjectedEthereumSigner } from '@dha-team/arbundles-signing';
 
 const CHAIN_ID = '0x14a34';
 const RENDER_URL = window.location.origin;
@@ -72,8 +70,9 @@ async function signAndUpload() {
     showError('');
 
     try {
+        // 1. Lejupielade failus no GitHub
         button.textContent = 'Lejupielade failus...';
-        setStatus('1/6: Lejupielade failus no GitHub...');
+        setStatus('1/5: Lejupielade failus no GitHub...');
 
         for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
@@ -95,18 +94,9 @@ async function signAndUpload() {
             return;
         }
 
-        // 2. Savienojamies ar MetaMask
-        button.textContent = 'Savienojas ar MetaMask...';
-        setStatus('2/6: Inicialize MetaMask...');
-
-        const konti = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const parakstitajs = await provider.getSigner();
-        const userAddress = konti[0];
-
-        // 3. Augšupielādējam failus caur Render starpnieku
-        setStatus('3/6: Augsupielade failus Arweave...');
-        button.textContent = 'Augsupielade...';
+        // 2. Augšupielādējam failus caur Render starpnieku
+        button.textContent = 'Augsupielade failus...';
+        setStatus('2/5: Augsupielade failus Arweave...');
         
         const paths = {};
         for (const file of filesWithContent) {
@@ -122,6 +112,7 @@ async function signAndUpload() {
                         { name: 'App-Name', value: 'PermRepo' },
                         { name: 'Repo', value: repo },
                         { name: 'File-Path', value: file.path },
+                        { name: 'Content-Type', value: 'text/plain' },
                         { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
                     ]
                 })
@@ -135,10 +126,13 @@ async function signAndUpload() {
             const result = await response.json();
             paths[file.path] = { id: result.id };
             file.txId = result.id;
+            console.log(`✅ ${file.path}: ${result.id}`);
         }
 
-        // 4. Manifest
-        setStatus('4/6: Veido manifestu...');
+        // 3. Manifest
+        button.textContent = 'Veido manifestu...';
+        setStatus('3/5: Veido manifestu...');
+        
         const manifest = {
             manifest: 'arweave/paths', version: '0.2.0',
             index: { path: 'README.md' }, paths: paths,
@@ -171,10 +165,16 @@ async function signAndUpload() {
         
         const manifestResult = await manifestResponse.json();
         const manifestTxId = manifestResult.id;
+        console.log('✅ Manifests:', manifestTxId);
 
-        // 5. Blockchain ieraksts ar EIP-712
-        setStatus('5/6: Apstiprini blockchain ierakstu MetaMask...');
-        button.textContent = 'Paraksti NFT ierakstu...';
+        // 4. Savienojamies ar MetaMask un parakstam blockchain ierakstu
+        button.textContent = 'Paraksti blockchain ierakstu...';
+        setStatus('4/5: Apstiprini blockchain ierakstu MetaMask...');
+
+        const konti = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const parakstitajs = await provider.getSigner();
+        const userAddress = konti[0];
 
         const manifestHash = ethers.id(manifestTxId);
         const merkleRoot = ethers.id(manifestTxId);
@@ -188,6 +188,7 @@ async function signAndUpload() {
             try {
                 const backupNumber = await nftReadContract.backupCount(tokenId);
                 const nonce = await nftReadContract.nonces(tokenId);
+                
                 const domain = {
                     name: 'PermRepo', version: '1',
                     chainId: parseInt(CHAIN_ID, 16), verifyingContract: NFT_ADDRESS
@@ -207,20 +208,26 @@ async function signAndUpload() {
                     backupNumber: (backupNumber + 1n).toString(),
                     manifestHash, merkleRoot, deadline, nonce: nonce.toString()
                 };
+                
                 const addBackupSignature = await parakstitajs.signTypedData(domain, types, value);
                 const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, parakstitajs);
                 const tx = await nftWriteContract.addBackup(
                     tokenId, manifestHash, merkleRoot,
                     `ar://${manifestTxId}`, deadline, addBackupSignature
                 );
+                
+                setStatus('4/5: Gaida blockchain transakcijas apstiprinajumu...');
                 await tx.wait();
+                console.log('✅ Blockchain ieraksts:', tx.hash);
             } catch (blockchainError) {
                 console.error('Blockchain ieraksts neizdevas:', blockchainError);
             }
         }
 
-        // 6. Issue
-        setStatus('6/6: Genere GitHub atskaiti...');
+        // 5. GitHub Issue
+        button.textContent = 'Veido GitHub Issue...';
+        setStatus('5/5: Genere GitHub atskaiti...');
+        
         const timestamp = Math.floor(Date.now() / 1000);
         const message = [
             'PermRepo Backup Authorization',
