@@ -1,632 +1,182 @@
-import { ethers } from "ethers";
-import { TurboFactory } from "@ardrive/turbo-sdk";
-import { InjectedEthereumSigner } from "@dha-team/arbundles";
+import { ethers } from 'ethers';
+import { TurboFactory } from '@ardrive/turbo-sdk';
+import { InjectedEthereumSigner } from '@dha-team/arbundles';
 
-
-// ============================================================
-// KONFIGURĀCIJA
-// ============================================================
-
-const CHAIN_ID = "0x14a34"; // Base Sepolia
-
-const CHAIN_ID_DECIMAL = 84532;
+const CHAIN_ID = '0x14a34';
 
 const NFT_ADDRESS =
-    "0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4";
-
-
-// ============================================================
-// NFT ABI
-// ============================================================
+    '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 
 const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external",
-
     "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
-
-    "function backupCount(uint256 tokenId) external view returns (uint256)",
-
-    "function nonces(uint256 tokenId) external view returns (uint256)"
+    "function backupCount(uint256) view returns (uint256)",
+    "function nonces(uint256) view returns (uint256)"
 ];
 
+const params = new URLSearchParams(window.location.search);
 
-// ============================================================
-// URL PARAMETRI
-// ============================================================
-
-const params =
-    new URLSearchParams(window.location.search);
-
-const repoFromUrl =
-    params.get("repo") || "";
-
-const filesParam =
-    params.get("files") || "";
-
-
-// ============================================================
-// GLOBĀLAIS STĀVOKLIS
-// ============================================================
+const repoFromUrl = params.get('repo') || '';
+const filesParam = params.get('files') || '';
 
 let filesToUpload = [];
 
-let provider = null;
+/* =========================================================
+   INIT
+========================================================= */
 
-let metamaskSigner = null;
+async function init() {
+    document.getElementById('repoInput').value = repoFromUrl;
 
-let turboSigner = null;
+    const timestampEl = document.getElementById('timestamp');
 
-let turbo = null;
-
-let userAddress = null;
-
-
-// ============================================================
-// DOM PALĪGPROGRAMMAS
-// ============================================================
-
-function setStatus(message) {
-
-    const element =
-        document.getElementById("status");
-
-    if (element) {
-        element.textContent = message;
-    }
-}
-
-
-function showError(message) {
-
-    const element =
-        document.getElementById("error");
-
-    if (element) {
-        element.textContent = message || "";
-    }
-}
-
-
-function setButtonText(message) {
-
-    const button =
-        document.getElementById("payButton");
-
-    if (button) {
-        button.textContent = message;
-    }
-}
-
-
-function setButtonDisabled(value) {
-
-    const button =
-        document.getElementById("payButton");
-
-    if (button) {
-        button.disabled = value;
-    }
-}
-
-
-function formatAddress(address) {
-
-    if (!address) {
-        return "-";
+    if (timestampEl) {
+        timestampEl.textContent = new Date().toLocaleString();
     }
 
-    return (
-        address.substring(0, 6) +
-        "..." +
-        address.substring(address.length - 4)
-    );
-}
+    if (filesParam) {
+        try {
+            filesToUpload = JSON.parse(
+                decodeURIComponent(filesParam)
+            );
 
+            document.getElementById('fileCount').textContent =
+                filesToUpload.length + ' faili';
 
-function formatBytes(bytes) {
+            const totalSize = filesToUpload.reduce(
+                (sum, file) => sum + Number(file.size || 0),
+                0
+            );
 
-    if (!Number.isFinite(bytes) || bytes <= 0) {
-        return "0 B";
+            document.getElementById('totalSize').textContent =
+                `${(totalSize / 1024).toFixed(1)} KB`;
+
+        } catch (error) {
+            console.error('Failu parametra kļūda:', error);
+            filesToUpload = [];
+        }
     }
 
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-
-    if (bytes < 1024 * 1024 * 1024) {
-        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    }
-
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-
-// ============================================================
-// REPO NORMALIZĀCIJA
-// ============================================================
-
-function normalizeRepository(repository) {
-
-    let repo =
-        String(repository || "").trim();
-
-    repo =
-        repo.replace(
-            /^https?:\/\/(www\.)?github\.com\//i,
-            ""
+    if (!window.ethereum) {
+        showError(
+            'Lūdzu, instalē MetaMask vai citu Web3 maku, lai turpinātu.'
         );
-
-    repo =
-        repo.replace(/^\/+|\/+$/g, "");
-
-    const parts =
-        repo.split("/").filter(Boolean);
-
-    if (parts.length < 2) {
-        throw new Error(
-            "Lūdzu, ievadi pareizu GitHub repozitoriju, piemēram: lietotajs/repo"
-        );
-    }
-
-    return `${parts[0]}/${parts[1]}`;
-}
-
-
-// ============================================================
-// FAILU PARAMETRU IELĀDE
-// ============================================================
-
-function loadFilesFromURL() {
-
-    if (!filesParam) {
-        filesToUpload = [];
         return;
     }
 
     try {
+        await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [
+                {
+                    chainId: CHAIN_ID
+                }
+            ]
+        });
 
-        const decoded =
-            decodeURIComponent(filesParam);
+        const button = document.getElementById('payButton');
 
-        const parsed =
-            JSON.parse(decoded);
+        button.disabled = false;
+        button.textContent =
+            'Maksāt ar MetaMask un augšupielādēt';
 
-        if (!Array.isArray(parsed)) {
-            throw new Error(
-                "Failu parametrs nav masīvs."
-            );
-        }
+        button.onclick = signAndUpload;
 
-        filesToUpload =
-            parsed.map((file) => ({
-                path: String(file.path || ""),
-                size: Number(file.size || 0),
-                content: file.content,
-                txId: null
-            }));
+        setStatus('Gatavs augšupielādei');
 
     } catch (error) {
-
-        console.error(
-            "Neizdevās nolasīt failu parametrus:",
-            error
-        );
-
-        filesToUpload = [];
+        console.error(error);
 
         showError(
-            "Neizdevās nolasīt failu sarakstu no URL."
+            'Kļūda mainot tīklu: ' +
+            (error?.message || 'Nezināma kļūda')
         );
     }
 }
 
 
-// ============================================================
-// UI FAILU INFORMĀCIJA
-// ============================================================
-
-function updateFileInformation() {
-
-    const fileCountElement =
-        document.getElementById("fileCount");
-
-    const totalSizeElement =
-        document.getElementById("totalSize");
-
-    if (!fileCountElement || !totalSizeElement) {
-        return;
-    }
-
-    fileCountElement.textContent =
-        `${filesToUpload.length} faili`;
-
-    const totalSize =
-        filesToUpload.reduce(
-            (sum, file) =>
-                sum + Number(file.size || 0),
-            0
-        );
-
-    totalSizeElement.textContent =
-        formatBytes(totalSize);
-}
-
-
-// ============================================================
-// META MASK SAVIENOŠANA
-// ============================================================
+/* =========================================================
+   META MASK
+========================================================= */
 
 async function connectMetaMask() {
 
     if (!window.ethereum) {
-
         throw new Error(
-            "MetaMask nav atrasts. Lūdzu, instalē MetaMask."
+            'MetaMask nav atrasts.'
         );
     }
 
+    await window.ethereum.request({
+        method: 'eth_requestAccounts'
+    });
 
-    setStatus(
-        "Savienojas ar MetaMask..."
+    const provider = new ethers.BrowserProvider(
+        window.ethereum
     );
 
+    const signer = await provider.getSigner();
 
-    // Pieprasām kontu
-
-    const accounts =
-        await window.ethereum.request({
-            method: "eth_requestAccounts"
-        });
-
-
-    if (
-        !accounts ||
-        accounts.length === 0
-    ) {
-
-        throw new Error(
-            "MetaMask neatgrieza nevienu kontu."
-        );
-    }
-
-
-    // Pārbaudām tīklu
-
-    const currentChainId =
-        await window.ethereum.request({
-            method: "eth_chainId"
-        });
-
-
-    if (
-        currentChainId.toLowerCase() !==
-        CHAIN_ID.toLowerCase()
-    ) {
-
-        try {
-
-            await window.ethereum.request({
-                method: "wallet_switchEthereumChain",
-                params: [
-                    {
-                        chainId: CHAIN_ID
-                    }
-                ]
-            });
-
-        } catch (switchError) {
-
-            console.error(
-                "Tīkla maiņas kļūda:",
-                switchError
-            );
-
-            throw new Error(
-                "Lūdzu, pārslēdz MetaMask uz Base Sepolia."
-            );
-        }
-    }
-
-
-    // Ethers BrowserProvider
-
-    provider =
-        new ethers.BrowserProvider(
-            window.ethereum
-        );
-
-
-    // Ethers signer
-
-    metamaskSigner =
-        await provider.getSigner();
-
-
-    userAddress =
-        await metamaskSigner.getAddress();
-
-
-    // UI
-
-    const walletRow =
-        document.getElementById("walletRow");
-
-    const walletAddress =
-        document.getElementById("walletAddress");
-
-    if (walletRow) {
-        walletRow.style.display = "flex";
-    }
-
-    if (walletAddress) {
-        walletAddress.textContent =
-            formatAddress(userAddress);
-    }
-
+    const address = await signer.getAddress();
 
     return {
         provider,
-        signer: metamaskSigner,
-        address: userAddress
+        signer,
+        address
     };
 }
 
 
-// ============================================================
-// TURBO INICIALIZĀCIJA
-// ============================================================
+/* =========================================================
+   TURBO
+========================================================= */
 
-async function initializeTurbo() {
-
-    if (!window.ethereum) {
-        throw new Error(
-            "MetaMask nav pieejams."
-        );
-    }
-
-
-    if (!metamaskSigner) {
-        await connectMetaMask();
-    }
-
-
-    setStatus(
-        "Inicializē Turbo MetaMask parakstītāju..."
-    );
-
+async function createTurboClient(signer, selectedCurrency) {
 
     /*
      * SVARĪGI:
      *
-     * Mēs NEIZMANTOJAM:
+     * Mēs vairs NEizmantojam:
      *
      * walletAdapter: {
      *     getSigner: () => signer
      * }
      *
-     * Mēs izmantojam tieši:
-     *
-     * InjectedEthereumSigner
-     *
-     * Tas ļauj Turbo SDK izmantot MetaMask
-     * bez privātās atslēgas serverī.
+     * EVM MetaMask gadījumā izmantojam
+     * InjectedEthereumSigner.
      */
 
-    const providerWrapper = {
-
-        getSigner: () => ({
-
-            signMessage: async (
-                message
-            ) => {
-
-                if (!window.ethereum) {
-
-                    throw new Error(
-                        "MetaMask vairs nav pieejams."
-                    );
-                }
-
-
-                const accounts =
-                    await window.ethereum.request({
-                        method: "eth_accounts"
-                    });
-
-
-                if (
-                    !accounts ||
-                    accounts.length === 0
-                ) {
-
-                    throw new Error(
-                        "MetaMask konts nav pievienots."
-                    );
-                }
-
-
-                let messageToSign;
-
-
-                /*
-                 * Turbo/arbundles var nodot:
-                 *
-                 * string
-                 *
-                 * vai
-                 *
-                 * Uint8Array
-                 */
-
-                if (
-                    typeof message === "string"
-                ) {
-
-                    messageToSign =
-                        message;
-
-                } else {
-
-                    const bytes =
-                        new Uint8Array(message);
-
-                    messageToSign =
-                        "0x" +
-                        Array.from(bytes)
-                            .map(
-                                (byte) =>
-                                    byte
-                                        .toString(16)
-                                        .padStart(2, "0")
-                            )
-                            .join("");
-                }
-
-
-                return await window.ethereum.request({
-
-                    method: "personal_sign",
-
-                    params: [
-                        messageToSign,
-                        accounts[0]
-                    ]
-
-                });
-            }
-
-        })
-
-    };
-
-
-    /*
-     * ŠIS ir galvenais punkts.
-     *
-     * InjectedEthereumSigner pats izmanto MetaMask.
-     * Nekādas privateKey vērtības šeit nav.
-     */
-
-    turboSigner =
-        new InjectedEthereumSigner(
-            providerWrapper
-        );
-
-
-    /*
-     * Publiskā atslēga jāinicializē pirms
-     * Turbo authenticated klienta izmantošanas.
-     */
-
-    if (
-        typeof turboSigner.setPublicKey ===
-        "function"
-    ) {
-
-        await turboSigner.setPublicKey();
-    }
-
-
-    const selectedCurrency =
-        document.getElementById(
-            "currencySelect"
-        ).value;
-
-
-    if (
-        selectedCurrency !== "base-eth" &&
-        selectedCurrency !== "base-usdc"
-    ) {
-
-        throw new Error(
-            "Neatbalstīta Base valūta."
-        );
-    }
-
-
-    /*
-     * Base Sepolia:
-     *
-     * base-eth
-     * base-usdc
-     *
-     * Šeit nav privateKey.
-     */
-
-    turbo =
-        TurboFactory.authenticated({
-
-            signer: turboSigner,
-
-            token: selectedCurrency,
-
-            paymentServiceConfig: {
-                url:
-                    "https://payment.services.ar-io.dev"
-            },
-
-            uploadServiceConfig: {
-                url:
-                    "https://upload.services.ar-io.dev"
-            }
-
+    const injectedSigner =
+        new InjectedEthereumSigner({
+            getSigner: () => signer
         });
 
+    const turbo = TurboFactory.authenticated({
+        signer: injectedSigner,
+        token: selectedCurrency
+    });
 
     return turbo;
 }
 
 
-// ============================================================
-// GITHUB FAILU LEJUPIELĀDE
-// ============================================================
+/* =========================================================
+   DOWNLOAD GITHUB FILES
+========================================================= */
 
 async function downloadRepositoryFiles(repo) {
 
-    setStatus(
-        "1/7: Lejupielādē failus no GitHub..."
-    );
+    for (let i = 0; i < filesToUpload.length; i++) {
 
-    setButtonText(
-        "Lejupielādē failus..."
-    );
-
-
-    let downloadedCount = 0;
-
-
-    for (
-        let i = 0;
-        i < filesToUpload.length;
-        i++
-    ) {
-
-        const file =
-            filesToUpload[i];
-
-
-        if (!file.path) {
-            continue;
-        }
-
+        const file = filesToUpload[i];
 
         try {
-
-            /*
-             * Vispirms mēģinām main branch.
-             */
 
             const rawUrl =
                 `https://raw.githubusercontent.com/${repo}/main/${file.path}`;
 
-
             const controller =
                 new AbortController();
-
 
             const timeoutId =
                 setTimeout(
@@ -634,610 +184,305 @@ async function downloadRepositoryFiles(repo) {
                     10000
                 );
 
-
             const response =
                 await fetch(
                     rawUrl,
                     {
-                        signal:
-                            controller.signal
+                        signal: controller.signal
                     }
                 );
-
 
             clearTimeout(timeoutId);
 
-
             if (response.ok) {
-
                 file.content =
                     await response.text();
-
-                downloadedCount++;
-
-                continue;
-            }
-
-
-            /*
-             * Ja main nav pieejams,
-             * mēģinām master.
-             */
-
-            const masterUrl =
-                `https://raw.githubusercontent.com/${repo}/master/${file.path}`;
-
-
-            const masterController =
-                new AbortController();
-
-
-            const masterTimeoutId =
-                setTimeout(
-                    () =>
-                        masterController.abort(),
-                    10000
-                );
-
-
-            const masterResponse =
-                await fetch(
-                    masterUrl,
-                    {
-                        signal:
-                            masterController.signal
-                    }
-                );
-
-
-            clearTimeout(masterTimeoutId);
-
-
-            if (
-                masterResponse.ok
-            ) {
-
-                file.content =
-                    await masterResponse.text();
-
-                downloadedCount++;
             }
 
         } catch (error) {
 
             console.warn(
-                `Neizdevās lejupielādēt ${file.path}:`,
+                `Neizdevās lejupielādēt ${file.path}`,
                 error
             );
         }
     }
 
-
-    const filesWithContent =
-        filesToUpload.filter(
-            (file) =>
-                file.content !== undefined &&
-                file.content !== null
-        );
-
-
-    if (
-        filesWithContent.length === 0
-    ) {
-
-        throw new Error(
-            "Neizdevās lejupielādēt nevienu repozitorija failu."
-        );
-    }
-
-
-    console.log(
-        `Lejupielādēti ${downloadedCount}/${filesToUpload.length} faili.`
+    return filesToUpload.filter(
+        file => file.content != null
     );
-
-
-    return filesWithContent;
 }
 
 
-// ============================================================
-// TURBO KREDĪTU APRĒĶINS
-// ============================================================
+/* =========================================================
+   TURBO BALANCE + TOP UP
+========================================================= */
 
-async function calculateBackupCost(
-    filesWithContent
+async function ensureTurboCredits(
+    turbo,
+    filesWithContent,
+    selectedCurrency
 ) {
 
-    setStatus(
-        "3/7: Aprēķina Turbo izmaksas..."
-    );
-
-    setButtonText(
-        "Aprēķina izmaksas..."
-    );
-
-
-    const encoder =
+    const textEncoder =
         new TextEncoder();
 
+    const totalBytes =
+        filesWithContent.reduce(
+            (sum, file) => {
 
-    /*
-     * Aprēķinām faktiskos failu baitus.
-     */
+                const bytes =
+                    textEncoder.encode(
+                        file.content
+                    ).length;
 
-    let totalBytes = 0;
+                return sum + bytes;
 
-
-    for (
-        const file of filesWithContent
-    ) {
-
-        const bytes =
-            encoder.encode(
-                String(file.content)
-            );
-
-        totalBytes +=
-            bytes.length;
-    }
-
-
-    /*
-     * Manifesta aptuvenais izmērs.
-     *
-     * Mēs vēlāk ģenerēsim manifestu,
-     * tāpēc pievienojam rezervi.
-     */
-
-    const estimatedManifestBytes =
-        Math.max(
-            4096,
-            filesWithContent.length * 160
+            },
+            0
         );
 
-
-    /*
-     * Turbo par katru DataItem ir arī
-     * paraksta/metadatu overhead.
-     *
-     * Pievienojam drošu rezervi.
-     */
-
-    const estimatedTotalBytes =
-        totalBytes +
-        estimatedManifestBytes +
-        (
-            filesWithContent.length *
-            2048
-        );
-
-
-    console.log(
-        "Turbo estimated bytes:",
-        estimatedTotalBytes
+    setStatus(
+        '3/6: Pārbauda Turbo kredītus...'
     );
 
-
     /*
-     * getUploadCosts sagaida:
-     *
-     * bytes: [number]
-     *
-     * nevis:
-     *
-     * bytes: number
+     * Esošais Turbo kredītu atlikums.
      */
 
-    const costs =
+    const balance =
+        await turbo.getBalance();
+
+    const currentBalance =
+        BigInt(balance.winc);
+
+
+    /*
+     * Aprēķina nepieciešamo cenu.
+     */
+
+    const uploadCosts =
         await turbo.getUploadCosts({
-
-            bytes: [
-                estimatedTotalBytes
-            ]
-
+            bytes: totalBytes
         });
 
 
-    if (
-        !Array.isArray(costs) ||
-        costs.length === 0
-    ) {
+    /*
+     * SDK var atgriezt masīvu.
+     */
+
+    if (!Array.isArray(uploadCosts) ||
+        uploadCosts.length === 0) {
 
         throw new Error(
-            "Turbo neatgrieza augšupielādes izmaksas."
+            'Turbo neatgrieza augšupielādes izmaksas.'
         );
     }
 
 
-    const cost =
-        costs[0];
+    const costInfo =
+        uploadCosts[0];
 
 
-    if (!cost || !cost.winc) {
+    if (!costInfo ||
+        costInfo.winc == null) {
 
         throw new Error(
-            "Turbo izmaksu atbilde nav derīga."
+            'Turbo izmaksu dati nav derīgi.'
         );
     }
 
 
-    console.log(
-        "Estimated Turbo credits:",
-        cost.winc
+    const requiredCredits =
+        BigInt(costInfo.winc);
+
+
+    /*
+     * Pietiek kredītu.
+     */
+
+    if (currentBalance >= requiredCredits) {
+
+        setStatus(
+            '3/6: Turbo kredītu pietiek.'
+        );
+
+        return;
+    }
+
+
+    /*
+     * Nepietiek kredītu.
+     *
+     * Šeit notiek ĪSTA lietotāja MetaMask
+     * maksājuma transakcija.
+     */
+
+    setStatus(
+        '3/6: Nepietiek kredītu — atver MetaMask...'
     );
 
-
-    /*
-     * Noskaidrojam cenu tieši izvēlētajā
-     * maksājuma tokenā.
-     *
-     * Tas dod token cenu, ko var izmantot
-     * topUpWithTokens().
-     */
-
-    const tokenPrice =
-        await turbo.getTokenPriceForBytes({
-
-            byteCount:
-                estimatedTotalBytes
-
-        });
+    const tokenAmount =
+        costInfo.tokenAmount;
 
 
-    if (
-        !tokenPrice ||
-        tokenPrice.tokenPrice === undefined
-    ) {
+    if (tokenAmount == null) {
 
         throw new Error(
-            "Turbo neatgrieza tokena cenu."
+            'Turbo neatgrieza tokenAmount.'
         );
     }
 
 
-    let tokenAmount =
-        tokenPrice.tokenPrice;
-
-
     /*
-     * Dažādās SDK versijās vērtība var būt
-     * string vai BigNumber tipa objekts.
+     * token jau ir:
      *
-     * Normalizējam uz string.
+     * base-eth
+     * base-usdc
+     *
+     * Tāpēc topUpWithTokens izmantojam
+     * tieši ar šo token tipu.
      */
 
-    tokenAmount =
-        String(tokenAmount);
-
-
-    /*
-     * Drošības rezerve.
-     *
-     * Turbo dokumentācija on-demand plūsmai
-     * izmanto 1.1 buffer.
-     *
-     * Šeit top-up gadījumā izmantojam
-     * 20% rezervi, jo mēs maksājam vienu
-     * reizi par visu backupu.
-     */
-
-    const rawTokenAmount =
-        BigInt(tokenAmount);
-
-
-    const bufferedTokenAmount =
-        (
-            rawTokenAmount * 120n
-        ) / 100n;
-
-
-    console.log(
-        "Turbo token price:",
+    await turbo.topUpWithTokens({
         tokenAmount
+    });
+
+
+    setStatus(
+        '3/6: Turbo kredīti papildināti.'
     );
-
-    console.log(
-        "Turbo token amount with buffer:",
-        bufferedTokenAmount.toString()
-    );
-
-
-    return {
-
-        totalBytes:
-            estimatedTotalBytes,
-
-        uploadWinc:
-            String(cost.winc),
-
-        tokenAmount:
-            bufferedTokenAmount.toString()
-
-    };
 }
 
 
-// ============================================================
-// TURBO TOP-UP — TIEŠI AR METAMASK
-// ============================================================
+/* =========================================================
+   UPLOAD FILE
+========================================================= */
 
-async function payForBackup(
-    tokenAmount
+async function uploadFile(
+    turbo,
+    file,
+    repo,
+    textEncoder
 ) {
 
-    setStatus(
-        "4/7: Apstiprini Turbo maksājumu MetaMask..."
-    );
+    const fileData =
+        textEncoder.encode(
+            file.content
+        );
 
-    setButtonText(
-        "Apstiprini maksājumu MetaMask..."
-    );
+    const blob =
+        new Blob(
+            [fileData],
+            {
+                type: 'text/plain'
+            }
+        );
 
-
-    /*
-     * ŠEIT notiek reālais maksājums.
-     *
-     * turbo.topUpWithTokens()
-     *
-     * izmanto InjectedEthereumSigner,
-     * kas izmanto MetaMask.
-     *
-     * Servera private key nav.
-     */
 
     const result =
-        await turbo.topUpWithTokens({
+        await turbo.uploadFile({
 
-            tokenAmount:
-                tokenAmount
+            fileStreamFactory:
+                () => blob.stream(),
 
+            fileSizeFactory:
+                () => blob.size,
+
+            dataItemOpts: {
+
+                tags: [
+
+                    {
+                        name: 'App-Name',
+                        value: 'PermRepo'
+                    },
+
+                    {
+                        name: 'Repo',
+                        value: repo
+                    },
+
+                    {
+                        name: 'File-Path',
+                        value: file.path
+                    },
+
+                    {
+                        name: 'Content-Type',
+                        value: 'text/plain'
+                    },
+
+                    {
+                        name: 'Unix-Time',
+                        value:
+                            String(
+                                Math.floor(
+                                    Date.now() / 1000
+                                )
+                            )
+                    }
+
+                ]
+            }
         });
 
-
-    console.log(
-        "Turbo top-up result:",
-        result
-    );
-
-
-    if (
-        !result ||
-        !result.id
-    ) {
-
-        throw new Error(
-            "Turbo maksājums neatgrieza transakcijas ID."
-        );
-    }
-
-
-    setStatus(
-        "Turbo maksājums apstiprināts. Gaidām kredītu..."
-    );
-
-
-    setButtonText(
-        "Gaida Turbo kredītus..."
-    );
-
-
-    /*
-     * topUpWithTokens atgriež rezultātu,
-     * bet kredītu balanss var kļūt pieejams
-     * pēc blockchain/payment service
-     * apstiprināšanas.
-     *
-     * Pārbaudām balance vairākas reizes.
-     */
-
-    const maxAttempts = 30;
-
-    for (
-        let attempt = 0;
-        attempt < maxAttempts;
-        attempt++
-    ) {
-
-        try {
-
-            const balance =
-                await turbo.getBalance();
-
-
-            console.log(
-                "Turbo balance:",
-                balance
-            );
-
-
-            if (
-                balance &&
-                balance.winc
-            ) {
-
-                return {
-                    ...result,
-                    balance
-                };
-            }
-
-        } catch (balanceError) {
-
-            console.warn(
-                "Turbo balance check failed:",
-                balanceError
-            );
-        }
-
-
-        await new Promise(
-            (resolve) =>
-                setTimeout(
-                    resolve,
-                    3000
-                )
-        );
-    }
-
-
-    /*
-     * Pat ja balance polling beidzās,
-     * maksājuma transakcija ir izveidota.
-     *
-     * Turpinām tikai tad, ja Turbo jau
-     * ir atgriezis funding rezultātu.
-     */
 
     return result;
 }
 
 
-// ============================================================
-// FAILU AUGŠUPIELĀDE
-// ============================================================
+/* =========================================================
+   UPLOAD ALL FILES
+========================================================= */
 
-async function uploadFilesToTurbo(
-    repo,
-    filesWithContent
+async function uploadRepositoryFiles(
+    turbo,
+    filesWithContent,
+    repo
 ) {
 
-    setStatus(
-        "5/7: Augšupielādē failus Arweave..."
-    );
-
-    setButtonText(
-        "Augšupielādē failus..."
-    );
-
-
-    const encoder =
+    const textEncoder =
         new TextEncoder();
-
 
     const paths = {};
 
 
     for (
-        let i = 0;
-        i < filesWithContent.length;
-        i++
+        const file
+        of filesWithContent
     ) {
 
-        const file =
-            filesWithContent[i];
-
-
         setStatus(
-            `5/7: Augšupielādē failu ${i + 1}/${filesWithContent.length}: ${file.path}`
+            `4/6: Augšupielādē ${file.path}...`
         );
 
 
-        const fileData =
-            encoder.encode(
-                String(file.content)
+        const result =
+            await uploadFile(
+                turbo,
+                file,
+                repo,
+                textEncoder
             );
 
 
-        const blob =
-            new Blob([
-                fileData
-            ], {
-                type:
-                    "text/plain"
-            });
-
-
-        const result =
-            await turbo.uploadFile({
-
-                fileStreamFactory:
-                    () => blob.stream(),
-
-                fileSizeFactory:
-                    () => blob.size,
-
-                dataItemOpts: {
-
-                    tags: [
-
-                        {
-                            name:
-                                "App-Name",
-
-                            value:
-                                "PermRepo"
-                        },
-
-                        {
-                            name:
-                                "Repo",
-
-                            value:
-                                repo
-                        },
-
-                        {
-                            name:
-                                "File-Path",
-
-                            value:
-                                file.path
-                        },
-
-                        {
-                            name:
-                                "Content-Type",
-
-                            value:
-                                "text/plain"
-                        },
-
-                        {
-                            name:
-                                "Unix-Time",
-
-                            value:
-                                String(
-                                    Math.floor(
-                                        Date.now() / 1000
-                                    )
-                                )
-                        }
-
-                    ]
-
-                }
-
-            });
-
-
-        if (
-            !result ||
-            !result.id
-        ) {
+        if (!result ||
+            !result.id) {
 
             throw new Error(
-                `Turbo neatgrieza ID failam ${file.path}.`
+                `Turbo neizdevās augšupielādēt ${file.path}.`
             );
         }
 
 
         paths[file.path] = {
-
-            id:
-                result.id
-
+            id: result.id
         };
 
 
         file.txId =
             result.id;
-
-
-        console.log(
-            `Uploaded ${file.path}:`,
-            result.id
-        );
     }
 
 
@@ -1245,57 +490,53 @@ async function uploadFilesToTurbo(
 }
 
 
-// ============================================================
-// MANIFESTA IZVEIDE UN AUGŠUPIELĀDE
-// ============================================================
+/* =========================================================
+   CREATE + UPLOAD MANIFEST
+========================================================= */
 
-async function uploadManifest(
+async function createAndUploadManifest(
+    turbo,
     repo,
     paths
 ) {
 
     setStatus(
-        "6/7: Izveido un augšupielādē manifestu..."
-    );
-
-    setButtonText(
-        "Augšupielādē manifestu..."
+        '5/6: Veido manifestu...'
     );
 
 
-    const pathNames =
-        Object.keys(paths);
+    let indexPath = 'README.md';
 
 
-    if (
-        pathNames.length === 0
-    ) {
+    if (!paths[indexPath]) {
 
-        throw new Error(
-            "Nav neviena augšupielādēta faila manifesta izveidei."
-        );
+        const availablePaths =
+            Object.keys(paths);
+
+
+        if (availablePaths.length === 0) {
+
+            throw new Error(
+                'Nav neviena augšupielādēta faila manifestam.'
+            );
+        }
+
+
+        indexPath =
+            availablePaths[0];
     }
-
-
-    const indexPath =
-        paths["README.md"]
-            ? "README.md"
-            : pathNames[0];
 
 
     const manifest = {
 
         manifest:
-            "arweave/paths",
+            'arweave/paths',
 
         version:
-            "0.2.0",
+            '0.2.0',
 
         index: {
-
-            path:
-                indexPath
-
+            path: indexPath
         },
 
         paths,
@@ -1308,15 +549,9 @@ async function uploadManifest(
                 new Date().toISOString(),
 
             generatedBy:
-                "PermRepo v1.0.0"
-
+                'PermRepo v1.0.0'
         }
-
     };
-
-
-    const encoder =
-        new TextEncoder();
 
 
     const manifestJSON =
@@ -1325,8 +560,12 @@ async function uploadManifest(
         );
 
 
+    const textEncoder =
+        new TextEncoder();
+
+
     const manifestData =
-        encoder.encode(
+        textEncoder.encode(
             manifestJSON
         );
 
@@ -1336,146 +575,116 @@ async function uploadManifest(
             [manifestData],
             {
                 type:
-                    "application/json"
+                    'application/x.arweave-manifest+json'
             }
         );
 
 
-    const manifestResult =
+    const result =
         await turbo.uploadFile({
 
             fileStreamFactory:
-                () =>
-                    manifestBlob.stream(),
+                () => manifestBlob.stream(),
 
             fileSizeFactory:
-                () =>
-                    manifestBlob.size,
+                () => manifestBlob.size,
 
             dataItemOpts: {
 
                 tags: [
 
                     {
-                        name:
-                            "App-Name",
-
-                        value:
-                            "PermRepo"
+                        name: 'App-Name',
+                        value: 'PermRepo'
                     },
 
                     {
-                        name:
-                            "Type",
-
-                        value:
-                            "path-manifest"
+                        name: 'Type',
+                        value: 'path-manifest'
                     },
 
                     {
-                        name:
-                            "Repo",
-
-                        value:
-                            repo
+                        name: 'Repo',
+                        value: repo
                     },
 
                     {
-                        name:
-                            "Content-Type",
-
+                        name: 'Content-Type',
                         value:
-                            "application/x.arweave-manifest+json"
+                            'application/x.arweave-manifest+json'
                     },
 
                     {
-                        name:
-                            "Unix-Time",
-
+                        name: 'Unix-Time',
                         value:
                             String(
                                 Math.floor(
                                     Date.now() / 1000
                                 )
                             )
-                    }
-
                 ]
-
             }
-
         });
 
 
-    if (
-        !manifestResult ||
-        !manifestResult.id
-    ) {
+    if (!result ||
+        !result.id) {
 
         throw new Error(
-            "Manifesta augšupielāde neizdevās."
+            'Manifesta augšupielāde neizdevās.'
         );
     }
 
 
-    console.log(
-        "Manifest transaction:",
-        manifestResult.id
-    );
-
-
     return {
-
         manifest,
-
-        manifestTxId:
-            manifestResult.id
-
+        manifestTxId: result.id
     };
 }
 
 
-// ============================================================
-// BLOCKCHAIN — ADD BACKUP
-// ============================================================
+/* =========================================================
+   ADD BACKUP TO NFT
+========================================================= */
 
-async function registerBackupOnBlockchain(
+async function addBackupToNFT(
+    provider,
+    signer,
     repo,
     manifestTxId
 ) {
 
     setStatus(
-        "7/7: Apstiprini backup ierakstu MetaMask..."
-    );
-
-    setButtonText(
-        "Apstiprini blockchain ierakstu..."
+        '6/6: Pārbauda PermRepo NFT...'
     );
 
 
-    if (!provider || !metamaskSigner) {
-
-        throw new Error(
-            "MetaMask signer nav inicializēts."
+    const manifestHash =
+        ethers.id(
+            manifestTxId
         );
-    }
 
 
-    /*
-     * Hash funkcija precīzi atbilst Solidity:
-     *
-     * keccak256(abi.encode(repository))
-     *
-     * Tāpēc izmantojam AbiCoder.encode()
-     * un nevis ethers.solidityPacked().
-     */
+    const merkleRoot =
+        ethers.id(
+            manifestTxId
+        );
+
+
+    const deadline =
+        Math.floor(
+            Date.now() / 1000
+        ) + 3600;
+
 
     const repoHash =
         ethers.keccak256(
-            ethers.AbiCoder.defaultAbiCoder().encode(
-                ["string"],
-                [repo]
-            )
+            ethers.AbiCoder
+                .defaultAbiCoder()
+                .encode(
+                    ['string'],
+                    [repo]
+                )
         );
 
 
@@ -1494,11 +703,12 @@ async function registerBackupOnBlockchain(
 
 
     if (
+        !tokenId ||
         tokenId === 0n
     ) {
 
         throw new Error(
-            `Repo ${repo} vēl nav piesaistīts PermRepo NFT. Vispirms jāizveido NFT šim repozitorijam.`
+            'Šim repozitorijam nav PermRepo NFT.'
         );
     }
 
@@ -1515,127 +725,58 @@ async function registerBackupOnBlockchain(
         );
 
 
-    const nextBackupNumber =
-        backupNumber + 1n;
-
-
-    const deadline =
-        BigInt(
-            Math.floor(
-                Date.now() / 1000
-            ) + 3600
-        );
-
-
-    /*
-     * Šeit izmantojam manifest transaction ID
-     * kā deterministisku hash avotu.
-     */
-
-    const manifestHash =
-        ethers.id(
-            manifestTxId
-        );
-
-
-    const merkleRoot =
-        ethers.id(
-            manifestTxId
-        );
-
-
-    /*
-     * EIP-712 domain
-     *
-     * Solidity:
-     *
-     * EIP712("PermRepo", "1")
-     */
-
     const domain = {
 
-        name:
-            "PermRepo",
+        name: 'PermRepo',
 
-        version:
-            "1",
+        version: '1',
 
         chainId:
-            CHAIN_ID_DECIMAL,
+            parseInt(
+                CHAIN_ID,
+                16
+            ),
 
         verifyingContract:
             NFT_ADDRESS
-
     };
 
-
-    /*
-     * Solidity ADD_BACKUP_TYPEHASH:
-     *
-     * AddBackup(
-     *   uint256 tokenId,
-     *   uint256 backupNumber,
-     *   bytes32 manifestHash,
-     *   bytes32 merkleRoot,
-     *   uint256 deadline,
-     *   uint256 nonce
-     * )
-     */
 
     const types = {
 
         AddBackup: [
 
             {
-                name:
-                    "tokenId",
-
-                type:
-                    "uint256"
+                name: 'tokenId',
+                type: 'uint256'
             },
 
             {
-                name:
-                    "backupNumber",
-
-                type:
-                    "uint256"
+                name: 'backupNumber',
+                type: 'uint256'
             },
 
             {
-                name:
-                    "manifestHash",
-
-                type:
-                    "bytes32"
+                name: 'manifestHash',
+                type: 'bytes32'
             },
 
             {
-                name:
-                    "merkleRoot",
-
-                type:
-                    "bytes32"
+                name: 'merkleRoot',
+                type: 'bytes32'
             },
 
             {
-                name:
-                    "deadline",
-
-                type:
-                    "uint256"
+                name: 'deadline',
+                type: 'uint256'
             },
 
             {
-                name:
-                    "nonce",
-
-                type:
-                    "uint256"
+                name: 'nonce',
+                type: 'uint256'
             }
 
         ]
-
     };
 
 
@@ -1645,63 +786,48 @@ async function registerBackupOnBlockchain(
             tokenId.toString(),
 
         backupNumber:
-            nextBackupNumber.toString(),
+            (
+                backupNumber + 1n
+            ).toString(),
 
         manifestHash,
 
         merkleRoot,
 
-        deadline:
-            deadline.toString(),
+        deadline,
 
         nonce:
             nonce.toString()
-
     };
 
 
-    console.log(
-        "EIP-712 domain:",
-        domain
-    );
-
-    console.log(
-        "EIP-712 value:",
-        value
+    setStatus(
+        '6/6: Apstiprini NFT ierakstu MetaMask...'
     );
 
 
     /*
-     * MetaMask paraksta EIP-712.
-     *
-     * Tas NAV Turbo paraksts.
-     *
-     * Tas ir atsevišķs PermRepo blockchain
-     * ieraksta paraksts.
+     * Lietotājs pats paraksta EIP-712.
      */
 
-    const addBackupSignature =
-        await metamaskSigner.signTypedData(
+    const signature =
+        await signer.signTypedData(
             domain,
             types,
             value
         );
 
 
-    setStatus(
-        "Nosūta PermRepo backup ierakstu blockchain..."
-    );
-
-    setButtonText(
-        "Nosūta blockchain transakciju..."
-    );
-
+    /*
+     * Lietotājs pats nosūta blockchain
+     * transakciju.
+     */
 
     const nftWriteContract =
         new ethers.Contract(
             NFT_ADDRESS,
             NFT_ABI,
-            metamaskSigner
+            signer
         );
 
 
@@ -1718,68 +844,37 @@ async function registerBackupOnBlockchain(
 
             deadline,
 
-            addBackupSignature
-
+            signature
         );
-
-
-    console.log(
-        "PermRepo backup transaction:",
-        tx.hash
-    );
 
 
     await tx.wait();
 
 
     console.log(
-        "PermRepo backup transaction confirmed:",
+        'Backup blockchain ieraksts:',
         tx.hash
     );
 
 
-    return {
-
-        tokenId,
-
-        backupNumber:
-            nextBackupNumber,
-
-        manifestHash,
-
-        merkleRoot,
-
-        deadline,
-
-        nonce,
-
-        signature:
-            addBackupSignature,
-
-        transactionHash:
-            tx.hash
-
-    };
+    return tx.hash;
 }
 
 
-// ============================================================
-// GITHUB ISSUE ATSKAITE
-// ============================================================
+/* =========================================================
+   GITHUB ISSUE
+========================================================= */
 
 async function createGitHubIssue(
     repo,
+    userAddress,
+    signer,
     filesWithContent,
-    manifestTxId,
-    blockchainResult
+    manifestTxId
 ) {
 
     setStatus(
-        "Izveido GitHub atskaiti..."
-    );
-
-    setButtonText(
-        "Izveido GitHub atskaiti..."
+        'Veido GitHub atskaiti...'
     );
 
 
@@ -1789,26 +884,9 @@ async function createGitHubIssue(
         );
 
 
-    const uploadedFiles =
-        filesWithContent.map(
-            (file) => ({
+    const message = [
 
-                path:
-                    file.path,
-
-                txId:
-                    file.txId,
-
-                size:
-                    file.size
-
-            })
-        );
-
-
-    const messageLines = [
-
-        "PermRepo Backup Authorization",
+        'PermRepo Backup Authorization',
 
         `Repository: ${repo}`,
 
@@ -1816,33 +894,15 @@ async function createGitHubIssue(
 
         `Address: ${userAddress}`,
 
-        `UploadedFiles: ${uploadedFiles.length}`,
+        `UploadedFiles: ${filesWithContent.length}`,
 
-        `ManifestTxId: ${manifestTxId}`,
+        `ManifestTxId: ${manifestTxId}`
 
-        `NFTAddress: ${NFT_ADDRESS}`,
+    ].join('\n');
 
-        `TokenId: ${blockchainResult.tokenId.toString()}`,
-
-        `BackupNumber: ${blockchainResult.backupNumber.toString()}`,
-
-        `BlockchainTransaction: ${blockchainResult.transactionHash}`
-
-    ];
-
-
-    const message =
-        messageLines.join("\n");
-
-
-    /*
-     * Šis ir lietotāja paraksts GitHub atskaitei.
-     *
-     * Tas nav Turbo signer paraksts.
-     */
 
     const signature =
-        await metamaskSigner.signMessage(
+        await signer.signMessage(
             message
         );
 
@@ -1858,25 +918,23 @@ async function createGitHubIssue(
 
         timestamp,
 
-        repository:
-            repo,
+        uploadedFiles:
+            filesWithContent.map(
+                file => ({
 
-        uploadedFiles,
+                    path:
+                        file.path,
 
-        manifestTxId,
+                    txId:
+                        file.txId,
 
-        nftAddress:
-            NFT_ADDRESS,
+                    size:
+                        file.size
 
-        tokenId:
-            blockchainResult.tokenId.toString(),
+                })
+            ),
 
-        backupNumber:
-            blockchainResult.backupNumber.toString(),
-
-        blockchainTransaction:
-            blockchainResult.transactionHash
-
+        manifestTxId
     };
 
 
@@ -1889,9 +947,9 @@ async function createGitHubIssue(
 
 
     const body =
-        "```json\n" +
+        '```json\n' +
         jsonBody +
-        "\n```";
+        '\n```';
 
 
     const issueTitle =
@@ -1904,68 +962,103 @@ async function createGitHubIssue(
         `&body=${encodeURIComponent(body)}`;
 
 
-    return issueUrl;
+    setStatus(
+        'Gatavs! Novirzām uz GitHub...'
+    );
+
+
+    setTimeout(
+        () => {
+            window.location.href =
+                issueUrl;
+        },
+        1500
+    );
 }
 
 
-// ============================================================
-// GALVENĀ BACKUP FUNKCIJA
-// ============================================================
+/* =========================================================
+   MAIN PROCESS
+========================================================= */
 
 async function signAndUpload() {
 
-    showError("");
+    let repo =
+        document
+            .getElementById('repoInput')
+            .value
+            .trim();
 
-    setButtonDisabled(true);
+
+    repo =
+        repo.replace(
+            /^https?:\/\/(www\.)?github\.com\//i,
+            ''
+        );
+
+
+    const repoParts =
+        repo.split('/');
+
+
+    if (
+        repoParts.length >= 2
+    ) {
+
+        repo =
+            `${repoParts[0]}/${repoParts[1]}`;
+    }
+
+
+    if (
+        !repo ||
+        !repo.includes('/')
+    ) {
+
+        showError(
+            'Lūdzu, ievadi pareizu repozitorija nosaukumu.'
+        );
+
+        return;
+    }
+
+
+    if (
+        filesToUpload.length === 0
+    ) {
+
+        showError(
+            'Nav atpazītu failu augšupielādei.'
+        );
+
+        return;
+    }
+
+
+    const button =
+        document.getElementById(
+            'payButton'
+        );
+
+
+    button.disabled = true;
+
+    showError('');
 
 
     try {
 
-        // ------------------------------------------------------
-        // 1. REPO
-        // ------------------------------------------------------
+        /* -----------------------------------------
+           1. GITHUB FILES
+        ----------------------------------------- */
 
-        const repoInput =
-            document.getElementById(
-                "repoInput"
-            );
-
-
-        const repo =
-            normalizeRepository(
-                repoInput.value
-            );
-
-
-        if (
-            filesToUpload.length === 0
-        ) {
-
-            throw new Error(
-                "Nav norādīts neviens fails augšupielādei."
-            );
-        }
-
-
-        // ------------------------------------------------------
-        // 2. META MASK
-        // ------------------------------------------------------
+        button.textContent =
+            'Lejupielādē failus...';
 
         setStatus(
-            "2/7: Savienojas ar MetaMask..."
+            '1/6: Lejupielādē failus no GitHub...'
         );
 
-        setButtonText(
-            "Savienojas ar MetaMask..."
-        );
-
-
-        await connectMetaMask();
-
-
-        // ------------------------------------------------------
-        // 3. LEJUPIELĀDE
-        // ------------------------------------------------------
 
         const filesWithContent =
             await downloadRepositoryFiles(
@@ -1973,497 +1066,192 @@ async function signAndUpload() {
             );
 
 
-        // ------------------------------------------------------
-        // 4. TURBO
-        // ------------------------------------------------------
+        if (
+            filesWithContent.length === 0
+        ) {
+
+            throw new Error(
+                'Neizdevās lejupielādēt nevienu failu.'
+            );
+        }
+
+
+        /* -----------------------------------------
+           2. METAMASK
+        ----------------------------------------- */
+
+        button.textContent =
+            'Savienojas ar MetaMask...';
 
         setStatus(
-            "3/7: Inicializē Turbo..."
-        );
-
-        setButtonText(
-            "Inicializē Turbo..."
+            '2/6: Savienojas ar MetaMask...'
         );
 
 
-        await initializeTurbo();
+        const {
+            provider,
+            signer,
+            address
+        } =
+            await connectMetaMask();
 
 
-        // ------------------------------------------------------
-        // 5. CENA + MAKSĀJUMS
-        // ------------------------------------------------------
+        const selectedCurrency =
+            document
+                .getElementById(
+                    'currencySelect'
+                )
+                .value;
 
-        const cost =
-            await calculateBackupCost(
-                filesWithContent
+
+        /* -----------------------------------------
+           3. TURBO
+        ----------------------------------------- */
+
+        const turbo =
+            await createTurboClient(
+                signer,
+                selectedCurrency
             );
 
 
-        console.log(
-            "Backup cost:",
-            cost
+        await ensureTurboCredits(
+            turbo,
+            filesWithContent,
+            selectedCurrency
         );
 
 
-        /*
-         * Šis ir VIENS Turbo top-up maksājums
-         * par šo backup.
-         *
-         * MetaMask atvērsies.
-         *
-         * Servera private key nav.
-         */
+        /* -----------------------------------------
+           4. FILE UPLOAD
+        ----------------------------------------- */
 
-        await payForBackup(
-            cost.tokenAmount
+        setStatus(
+            '4/6: Augšupielādē failus Arweave...'
         );
 
-
-        // ------------------------------------------------------
-        // 6. FAILI
-        // ------------------------------------------------------
 
         const paths =
-            await uploadFilesToTurbo(
-                repo,
-                filesWithContent
+            await uploadRepositoryFiles(
+                turbo,
+                filesWithContent,
+                repo
             );
 
 
-        // ------------------------------------------------------
-        // 7. MANIFESTS
-        // ------------------------------------------------------
+        /* -----------------------------------------
+           5. MANIFEST
+        ----------------------------------------- */
 
-        const manifestResult =
-            await uploadManifest(
+        const {
+            manifestTxId
+        } =
+            await createAndUploadManifest(
+                turbo,
                 repo,
                 paths
             );
 
 
-        const manifestTxId =
-            manifestResult.manifestTxId;
+        /* -----------------------------------------
+           6. NFT
+        ----------------------------------------- */
 
-
-        // ------------------------------------------------------
-        // 8. BLOCKCHAIN
-        // ------------------------------------------------------
-
-        const blockchainResult =
-            await registerBackupOnBlockchain(
-                repo,
-                manifestTxId
-            );
-
-
-        // ------------------------------------------------------
-        // 9. GITHUB ISSUE
-        // ------------------------------------------------------
-
-        const issueUrl =
-            await createGitHubIssue(
-                repo,
-                filesWithContent,
-                manifestTxId,
-                blockchainResult
-            );
-
-
-        // ------------------------------------------------------
-        // 10. PABEIGTS
-        // ------------------------------------------------------
-
-        setStatus(
-            "Backup veiksmīgi pabeigts!"
-        );
-
-        setButtonText(
-            "✓ Backup pabeigts"
+        await addBackupToNFT(
+            provider,
+            signer,
+            repo,
+            manifestTxId
         );
 
 
-        console.log(
-            "PermRepo backup completed:",
-            {
-                repository:
-                    repo,
+        /* -----------------------------------------
+           GITHUB REPORT
+        ----------------------------------------- */
 
-                manifestTxId,
-
-                tokenId:
-                    blockchainResult.tokenId.toString(),
-
-                backupNumber:
-                    blockchainResult.backupNumber.toString(),
-
-                blockchainTransaction:
-                    blockchainResult.transactionHash,
-
-                issueUrl
-
-            }
+        await createGitHubIssue(
+            repo,
+            address,
+            signer,
+            filesWithContent,
+            manifestTxId
         );
 
-
-        /*
-         * Pēc īsas pauzes aizvedam lietotāju
-         * uz GitHub Issue.
-         */
-
-        setTimeout(
-            () => {
-
-                window.location.href =
-                    issueUrl;
-
-            },
-            1500
-        );
 
     } catch (error) {
 
         console.error(
-            "PermRepo backup error:",
+            'PermRepo backup error:',
             error
         );
 
 
-        let message =
-            error?.message ||
-            "Nezināma kļūda.";
-
-
-        /*
-         * MetaMask lietotāja atcelšana.
-         */
-
         if (
             error?.code ===
-            "ACTION_REJECTED"
+            'ACTION_REJECTED'
         ) {
-
-            message =
-                "MetaMask transakcija vai paraksts tika atcelts.";
-
-        } else if (
-            error?.code ===
-            4001
-        ) {
-
-            message =
-                "MetaMask pieprasījums tika atcelts.";
-
-        }
-
-
-        showError(
-            "Kļūda: " + message
-        );
-
-
-        setStatus(
-            "Backup neizdevās."
-        );
-
-
-        setButtonText(
-            "Mēģināt vēlreiz"
-        );
-
-
-        setButtonDisabled(false);
-    }
-}
-
-
-// ============================================================
-// SĀKOTNĒJĀ INICIALIZĀCIJA
-// ============================================================
-
-async function init() {
-
-    try {
-
-        // ------------------------------------------------------
-        // Repo
-        // ------------------------------------------------------
-
-        const repoInput =
-            document.getElementById(
-                "repoInput"
-            );
-
-
-        if (repoInput) {
-
-            repoInput.value =
-                repoFromUrl;
-
-        }
-
-
-        // ------------------------------------------------------
-        // Timestamp
-        // ------------------------------------------------------
-
-        const timestampElement =
-            document.getElementById(
-                "timestamp"
-            );
-
-
-        if (timestampElement) {
-
-            timestampElement.textContent =
-                new Date().toLocaleString(
-                    "lv-LV"
-                );
-
-        }
-
-
-        // ------------------------------------------------------
-        // Faili
-        // ------------------------------------------------------
-
-        loadFilesFromURL();
-
-        updateFileInformation();
-
-
-        // ------------------------------------------------------
-        // MetaMask
-        // ------------------------------------------------------
-
-        if (!window.ethereum) {
 
             showError(
-                "Lūdzu, instalē MetaMask vai citu EVM Web3 maku."
+                'Transakcija vai paraksts tika atcelts MetaMask.'
             );
 
-            setStatus(
-                "MetaMask nav atrasts."
-            );
+        } else {
 
-            return;
-        }
-
-
-        // ------------------------------------------------------
-        // Tīkla pārbaude
-        // ------------------------------------------------------
-
-        setStatus(
-            "Pārbauda MetaMask tīklu..."
-        );
-
-
-        const currentChainId =
-            await window.ethereum.request({
-
-                method:
-                    "eth_chainId"
-
-            });
-
-
-        if (
-            currentChainId.toLowerCase() !==
-            CHAIN_ID.toLowerCase()
-        ) {
-
-            try {
-
-                await window.ethereum.request({
-
-                    method:
-                        "wallet_switchEthereumChain",
-
-                    params: [
-
-                        {
-                            chainId:
-                                CHAIN_ID
-                        }
-
-                    ]
-
-                });
-
-            } catch (error) {
-
-                console.error(
-                    "Network switch failed:",
-                    error
-                );
-
-                showError(
-                    "Lūdzu, pārslēdz MetaMask uz Base Sepolia."
-                );
-
-                setStatus(
-                    "Nepareizs tīkls."
-                );
-
-                return;
-            }
-        }
-
-
-        // ------------------------------------------------------
-        // Poga
-        // ------------------------------------------------------
-
-        const button =
-            document.getElementById(
-                "payButton"
-            );
-
-
-        if (!button) {
-
-            throw new Error(
-                "payButton elements nav atrasts."
+            showError(
+                'Kļūda: ' +
+                (
+                    error?.shortMessage ||
+                    error?.message ||
+                    'Nezināma kļūda'
+                )
             );
         }
 
 
-        button.disabled =
-            false;
-
+        button.disabled = false;
 
         button.textContent =
-            "💳 Maksāt ar MetaMask un augšupielādēt";
-
-
-        button.onclick =
-            signAndUpload;
-
-
-        setStatus(
-            "Gatavs backup izveidei."
-        );
-
-
-    } catch (error) {
-
-        console.error(
-            "PermRepo initialization error:",
-            error
-        );
-
-
-        showError(
-            "Inicializācijas kļūda: " +
-            (
-                error?.message ||
-                "Nezināma kļūda."
-            )
-        );
-
-
-        setStatus(
-            "Inicializācija neizdevās."
-        );
+            'Mēģināt vēlreiz';
     }
 }
 
 
-// ============================================================
-// METAMASK EVENTI
-// ============================================================
+/* =========================================================
+   UI HELPERS
+========================================================= */
 
-if (window.ethereum) {
+function setStatus(message) {
 
-    window.ethereum.on?.(
-        "accountsChanged",
-        (
-            accounts
-        ) => {
-
-            if (
-                !accounts ||
-                accounts.length === 0
-            ) {
-
-                userAddress =
-                    null;
-
-                const walletRow =
-                    document.getElementById(
-                        "walletRow"
-                    );
-
-                if (walletRow) {
-                    walletRow.style.display =
-                        "none";
-                }
-
-                setStatus(
-                    "MetaMask konts atvienots."
-                );
-
-                return;
-            }
+    const element =
+        document.getElementById(
+            'status'
+        );
 
 
-            userAddress =
-                accounts[0];
-
-
-            const walletAddress =
-                document.getElementById(
-                    "walletAddress"
-                );
-
-
-            if (walletAddress) {
-
-                walletAddress.textContent =
-                    formatAddress(
-                        userAddress
-                    );
-
-            }
-
-        }
-    );
-
-
-    window.ethereum.on?.(
-        "chainChanged",
-        () => {
-
-            /*
-             * Pēc tīkla maiņas ethers provider
-             * var būt jāizveido no jauna.
-             */
-
-            provider =
-                null;
-
-            metamaskSigner =
-                null;
-
-            turboSigner =
-                null;
-
-            turbo =
-                null;
-
-
-            setStatus(
-                "Tīkls mainīts. Lūdzu, turpini ar pareizo tīklu."
-            );
-
-        }
-    );
-
+    if (element) {
+        element.textContent =
+            message;
+    }
 }
 
 
-// ============================================================
-// START
-// ============================================================
+function showError(message) {
+
+    const element =
+        document.getElementById(
+            'error'
+        );
+
+
+    if (element) {
+        element.textContent =
+            message;
+    }
+}
+
+
+/* =========================================================
+   START
+========================================================= */
 
 init();
