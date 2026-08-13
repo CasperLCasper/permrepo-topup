@@ -3,6 +3,7 @@ import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles-signing';
 
 const CHAIN_ID = '0x14a34';
+const RENDER_URL = window.location.origin;
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external",
@@ -110,8 +111,8 @@ async function signAndUpload() {
         const turbo = TurboFactory.authenticated({
             signer: turboParakstitajs,
             token: selectedCurrency,
-            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
-            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+            uploadServiceConfig: { url: `${RENDER_URL}/api/turbo` },
+            paymentServiceConfig: { url: `${RENDER_URL}/api/turbo` }
         });
 
         setStatus('3/6: Parbauda kreditus...');
