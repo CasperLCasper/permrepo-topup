@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
+import { TurboFactory } from '@ardrive/turbo-sdk';
 
 const CHAIN_ID = '0x14a34';
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
@@ -93,42 +93,48 @@ async function signAndUpload() {
             return;
         }
 
-        // 2. Izveidojam pagaidu maku
-        button.textContent = 'Sagatavo pagaidu maku...';
-        setStatus('2/6: Inicialize drošu sesiju...');
+        // 2. Savienojamies ar MetaMask un inicializejam Turbo caur walletAdapter
+        button.textContent = 'Savienojas ar MetaMask...';
+        setStatus('2/6: Inicialize MetaMask...');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const burnerWallet = ethers.Wallet.createRandom().connect(provider);
-        const burnerPrivateKey = burnerWallet.privateKey;
-
-        const turboSigner = new EthereumSigner(burnerPrivateKey);
         const selectedCurrency = document.getElementById('currencySelect').value;
         
         const turbo = TurboFactory.authenticated({
-            signer: turboSigner,
             token: selectedCurrency,
-            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
-            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+            walletAdapter: {
+                getSigner: () => signer
+            },
+            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
+            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
         });
 
-        // 3. Pārskaitam līdzekļus uz pagaidu maku
-        setStatus('3/6: Parskaita lidzeklus uz pagaidu maku...');
-        button.textContent = 'Apstiprini maksajumu...';
+        // 3. Parbauda kreditus un nepieciešamības gadījumā papildina
+        setStatus('3/6: Parbauda kreditus...');
+        button.textContent = 'Parbauda kreditus...';
 
         const textEncoder = new TextEncoder();
         const totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
-        const estimatedCost = Math.max(0.001, totalBytes / 1000000 * 0.001);
-        const amount = ethers.parseEther(estimatedCost.toFixed(4));
-        
-        const tx = await signer.sendTransaction({
-            to: burnerWallet.address,
-            value: amount
-        });
-        await tx.wait();
-        setStatus(`Pārskaitīti ${estimatedCost.toFixed(4)} ETH uz pagaidu maku`);
+
+        const { winc: currentBalance } = await turbo.getBalance();
+        const uploadCosts = await turbo.getUploadCosts({ bytes: totalBytes });
+        const costInfo = uploadCosts[0];
+
+        if (costInfo && parseInt(currentBalance) < parseInt(costInfo.winc)) {
+            const token = selectedCurrency === 'base-usdc' ? 'usdc' : 'ethereum';
+            setStatus(`3/6: Nepietiek kreditu. Apstiprini maksajumu MetaMask...`);
+            button.textContent = 'Apstiprini maksajumu...';
+            await turbo.topUpWithTokens({
+                tokenAmount: costInfo.tokenAmount,
+                token: token
+            });
+            setStatus('Krediti papildinati! Turpinam...');
+        } else {
+            setStatus('3/6: Pietiekami kreditu. Turpinam...');
+        }
 
         // 4. Augsupielade failus
         setStatus('4/6: Augsupielade failus Arweave...');
@@ -181,27 +187,15 @@ async function signAndUpload() {
         });
         const manifestTxId = manifestResult.id;
 
-        // === ATMAKSĀT PĀRPALIKUMU ===
-        setStatus('Atmaksa...');
-        const remainingBalance = await provider.getBalance(burnerWallet.address);
-        const gasReserve = ethers.parseEther('0.0001');
-        
-        if (remainingBalance > gasReserve) {
-            const refundAmount = remainingBalance - gasReserve;
-            const returnTx = await burnerWallet.sendTransaction({
-                to: userAddress,
-                value: refundAmount
-            });
-            await returnTx.wait();
-            console.log(`Atmaksāts ${ethers.formatEther(refundAmount)} ETH`);
-        }
+        // 6. Blockchain ieraksts ar EIP-712
+        setStatus('6/6: Apstiprini blockchain ierakstu MetaMask...');
+        button.textContent = 'Paraksti NFT ierakstu...';
 
-        // 6. Blockchain ieraksts
-        setStatus('6/6: Apstiprini blockchain ierakstu...');
         const manifestHash = ethers.id(manifestTxId);
         const merkleRoot = ethers.id(manifestTxId);
         const deadline = Math.floor(Date.now() / 1000) + 3600;
         const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
+        
         const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
         const tokenId = await nftReadContract.repositoryTokens(repoHash);
 
@@ -209,9 +203,11 @@ async function signAndUpload() {
             try {
                 const backupNumber = await nftReadContract.backupCount(tokenId);
                 const nonce = await nftReadContract.nonces(tokenId);
+                
                 const domain = {
                     name: 'PermRepo', version: '1',
-                    chainId: parseInt(CHAIN_ID, 16), verifyingContract: NFT_ADDRESS
+                    chainId: parseInt(CHAIN_ID, 16),
+                    verifyingContract: NFT_ADDRESS
                 };
                 const types = {
                     AddBackup: [
@@ -226,15 +222,20 @@ async function signAndUpload() {
                 const value = {
                     tokenId: tokenId.toString(),
                     backupNumber: (backupNumber + 1n).toString(),
-                    manifestHash, merkleRoot, deadline, nonce: nonce.toString()
+                    manifestHash, merkleRoot, deadline,
+                    nonce: nonce.toString()
                 };
+                
                 const addBackupSignature = await signer.signTypedData(domain, types, value);
+                
                 const nftWriteContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, signer);
                 const tx = await nftWriteContract.addBackup(
                     tokenId, manifestHash, merkleRoot,
                     `ar://${manifestTxId}`, deadline, addBackupSignature
                 );
+                
                 await tx.wait();
+                console.log('Blockchain ieraksts veiksmigs!', tx.hash);
             } catch (blockchainError) {
                 console.error('Blockchain ieraksts neizdevas:', blockchainError);
             }
