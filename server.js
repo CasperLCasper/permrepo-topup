@@ -16,40 +16,56 @@ app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 // TURBO STARPNIEKS (bez privātās atslēgas)
 // ==========================================
 
-// Uz priekšu — pārsūta visus pieprasījumus no /api/turbo uz Turbo
 app.use('/api/turbo', async (req, res) => {
     try {
-        // Noņemam /api/turbo no ceļa
         const turboPath = req.path;
         const queryString = new URLSearchParams(req.query).toString();
         
-        // Izvēlamies pareizo Turbo URL
-        let turboBaseUrl = 'https://upload.services.ar-io.dev';
+        // Izvēlamies pareizo Turbo vārteju
+        let turboBaseUrl;
         
-        // Ja pieprasījums ir balance, costs, topup utt. — uz payment
-        if (turboPath.includes('/balance') || turboPath.includes('/costs') || turboPath.includes('/topup') || turboPath.includes('/info') || turboPath.includes('/currencies')) {
+        if (
+            turboPath.includes('/balance') ||
+            turboPath.includes('/costs') ||
+            turboPath.includes('/topup') ||
+            turboPath.includes('/info') ||
+            turboPath.includes('/currencies') ||
+            turboPath.includes('/pricing')
+        ) {
             turboBaseUrl = 'https://payment.services.ar-io.dev';
+        } else {
+            turboBaseUrl = 'https://upload.services.ar-io.dev';
         }
         
         const turboUrl = `${turboBaseUrl}${turboPath}${queryString ? '?' + queryString : ''}`;
         
         console.log(`Starpnieks: ${req.method} ${turboUrl}`);
         
-        const response = await fetch(turboUrl, {
+        const fetchOptions = {
             method: req.method,
             headers: {
-                'Content-Type': req.headers['content-type'] || 'application/octet-stream',
-                'Accept': req.headers['accept'] || 'application/json'
-            },
-            body: req.method === 'GET' ? undefined : JSON.stringify(req.body)
-        });
+                'Accept': 'application/json'
+            }
+        };
+        
+        if (req.method === 'POST') {
+            fetchOptions.headers['Content-Type'] = 'application/octet-stream';
+            fetchOptions.body = JSON.stringify(req.body);
+        }
+        
+        const response = await fetch(turboUrl, fetchOptions);
         
         const contentType = response.headers.get('content-type');
-        const data = contentType && contentType.includes('json') 
-            ? await response.json() 
-            : await response.text();
+        let data;
         
-        res.status(response.status).json(data);
+        if (contentType && contentType.includes('json')) {
+            data = await response.json();
+        } else {
+            data = await response.text();
+        }
+        
+        res.status(response.status).send(data);
+        
     } catch (e) {
         console.error('Starpnieka kļūda:', e.message);
         res.status(500).json({ error: e.message });
