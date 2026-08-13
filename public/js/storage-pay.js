@@ -98,8 +98,8 @@ async function signAndUpload() {
         setStatus('2/6: Inicialize MetaMask...');
 
         const konti = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const providers = new ethers.providers.Web3Provider(window.ethereum);
-        const parakstitajs = providers.getSigner();
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const parakstitajs = await provider.getSigner();
         const userAddress = konti[0];
 
         const turboParakstitajs = new InjectedEthereumSigner({ 
@@ -171,7 +171,7 @@ async function signAndUpload() {
         const deadline = Math.floor(Date.now() / 1000) + 3600;
         const repoHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repo]));
         
-        const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, providers);
+        const nftReadContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
         const tokenId = await nftReadContract.repositoryTokens(repoHash);
 
         if (tokenId && tokenId !== 0n) {
