@@ -108,11 +108,13 @@ async function signAndUpload() {
         });
 
         const selectedCurrency = document.getElementById('currencySelect').value;
+        
+        // ŠEIT IR LABOJUMS - izdzēsts /api/turbo, lai URL pilnībā sakristu ar parakstu
         const turbo = TurboFactory.authenticated({
             signer: turboParakstitajs,
             token: selectedCurrency,
-            uploadServiceConfig: { url: `${RENDER_URL}/api/turbo` },
-            paymentServiceConfig: { url: `${RENDER_URL}/api/turbo` }
+            uploadServiceConfig: { url: RENDER_URL },
+            paymentServiceConfig: { url: RENDER_URL }
         });
 
         setStatus('3/6: Parbauda kreditus...');
