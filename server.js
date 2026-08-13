@@ -9,8 +9,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '50mb' }));
-
-// Statiskie faili
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 
@@ -22,9 +20,7 @@ app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 app.get('/api/turbo/balance', async (req, res) => {
     try {
         const response = await fetch('https://payment.services.ar-io.dev/v1/balance', {
-            headers: {
-                'Accept': 'application/json'
-            }
+            headers: { 'Accept': 'application/json' }
         });
         const data = await response.json();
         res.json(data);
@@ -39,9 +35,7 @@ app.get('/api/turbo/costs', async (req, res) => {
     try {
         const { bytes } = req.query;
         const response = await fetch(`https://payment.services.ar-io.dev/v1/costs?bytes=${bytes}`, {
-            headers: {
-                'Accept': 'application/json'
-            }
+            headers: { 'Accept': 'application/json' }
         });
         const data = await response.json();
         res.json(data);
@@ -67,8 +61,17 @@ app.post('/api/turbo/upload', async (req, res) => {
             body: buffer
         });
         
-        const result = await response.json();
-        res.json(result);
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Turbo upload error:', errorText);
+            return res.status(response.status).json({ error: errorText });
+        }
+        
+        // Turbo atgriež TX ID kā plain text
+        const txId = await response.text();
+        console.log('Upload successful, TX ID:', txId);
+        
+        res.json({ id: txId.trim() });
     } catch (e) {
         console.error('Upload error:', e.message);
         res.status(500).json({ error: e.message });
@@ -106,9 +109,7 @@ app.post('/api/turbo/topup', async (req, res) => {
         
         const response = await fetch('https://payment.services.ar-io.dev/v1/topup', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ amount, token, destinationAddress })
         });
         
