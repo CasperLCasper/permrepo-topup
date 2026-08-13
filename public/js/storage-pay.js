@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { TurboFactory } from '@ardrive/turbo-sdk/web';
-import { InjectedEthereumSigner } from '@dha-team/arbundles';
+import { InjectedEthereumSigner } from '@dha-team/arbundles-signing';
 
 const CHAIN_ID = '0x14a34';
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
