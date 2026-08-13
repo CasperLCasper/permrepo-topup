@@ -3,7 +3,6 @@ import { TurboFactory } from '@ardrive/turbo-sdk/web';
 import { InjectedEthereumSigner } from '@dha-team/arbundles-signing';
 
 const CHAIN_ID = '0x14a34';
-const RENDER_URL = window.location.origin;
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const NFT_ABI = [
     "function addBackup(uint256 tokenId, bytes32 manifestHash, bytes32 merkleRoot, string calldata manifestURI, uint256 deadline, bytes calldata signature) external",
@@ -109,18 +108,17 @@ async function signAndUpload() {
 
         const selectedCurrency = document.getElementById('currencySelect').value;
         
-        // ŠEIT IR LABOJUMS - izdzēsts /api/turbo, lai URL pilnībā sakristu ar parakstu
+        // MĒS IZMANTOJAM TIEŠO SAVIENOJUMU - vairs nekādu proxy URL!
         const turbo = TurboFactory.authenticated({
             signer: turboParakstitajs,
-            token: selectedCurrency,
-            uploadServiceConfig: { url: RENDER_URL },
-            paymentServiceConfig: { url: RENDER_URL }
+            token: selectedCurrency
         });
 
         setStatus('3/6: Parbauda kreditus...');
         const textEncoder = new TextEncoder();
         const totalBytes = filesWithContent.reduce((sum, f) => sum + textEncoder.encode(f.content).length, 0);
 
+        // Tagad pieprasījums ies pa tiešo uz Ar-IO ar pareizu parakstu
         const { winc: currentBalance } = await turbo.getBalance();
         const uploadCosts = await turbo.getUploadCosts({ bytes: totalBytes });
         const costInfo = uploadCosts[0];
