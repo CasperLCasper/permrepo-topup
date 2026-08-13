@@ -19,44 +19,40 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+// Svarīgi: Node_modules un statiskie faili jāapkalpo PIRMS datu plūsmas apstrādes
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 
 // ==========================================
-// TURBO STARPNIEKS (izlabots)
+// TURBO STARPNIEKS (Bez ķermeņa pārveidošanas)
 // ==========================================
-
-app.use('/api/turbo', async (req, res) => {
+// Izmantojam express.raw(), lai saglabātu precīzus baitus un nesabojātu Web3 parakstu!
+app.use('/v1', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
     try {
-        const turboPath = req.path;
-        const queryString = new URLSearchParams(req.query).toString();
+        // req.url jau saturēs /balance un parametrus, tāpēc pievienojam tikai /v1
+        const turboPath = '/v1' + req.url; 
         
         // Izvēlamies pareizo Turbo vārteju
-        let turboBaseUrl;
+        let turboBaseUrl = 'https://upload.services.ar-io.dev';
         if (
-            turboPath.includes('/balance') ||
-            turboPath.includes('/costs') ||
-            turboPath.includes('/topup') ||
-            turboPath.includes('/info') ||
-            turboPath.includes('/currencies') ||
+            turboPath.includes('/balance') || 
+            turboPath.includes('/costs') || 
+            turboPath.includes('/topup') || 
+            turboPath.includes('/info') || 
+            turboPath.includes('/currencies') || 
             turboPath.includes('/pricing')
         ) {
             turboBaseUrl = 'https://payment.services.ar-io.dev';
-        } else {
-            turboBaseUrl = 'https://upload.services.ar-io.dev';
         }
         
-        const turboUrl = `${turboBaseUrl}${turboPath}${queryString ? '?' + queryString : ''}`;
-        
+        const turboUrl = `${turboBaseUrl}${turboPath}`;
         console.log(`Starpnieks: ${req.method} ${turboUrl}`);
         
         // Kopējam visus svarīgos ienākošos headerus no SDK
         const forwardHeaders = {};
         for (const [key, value] of Object.entries(req.headers)) {
             // Izlaižam headerus, kas var sabojāt savienojumu ar Ar-IO
-            if (!['host', 'connection', 'content-length'].includes(key.toLowerCase())) {
+            if (!['host', 'connection'].includes(key.toLowerCase())) {
                 forwardHeaders[key] = value;
             }
         }
@@ -69,28 +65,24 @@ app.use('/api/turbo', async (req, res) => {
             headers: forwardHeaders
         };
         
-        // Apstrādājam kermeņa (body) pārsūtīšanu POST / PUT gadījumā
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            if (Buffer.isBuffer(req.body)) {
-                fetchOptions.body = req.body;
-            } else if (typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-                fetchOptions.body = JSON.stringify(req.body);
-            }
+        // Pārsūtām neapstrādātu (raw) ķermeni, ja tāds ir nosūtīts POST/PUT formātā
+        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body && Buffer.isBuffer(req.body)) {
+            fetchOptions.body = req.body;
         }
         
         const response = await fetch(turboUrl, fetchOptions);
         
-        const contentType = response.headers.get('content-type');
-        let data;
-        
-        if (contentType && contentType.includes('json')) {
-            data = await response.json();
-        } else {
-            data = await response.text();
-        }
+        // Nolasām atbildi kā tekstu (vai neapstrādātu virkni), lai nemainītu saturu
+        const data = await response.text(); 
 
         if (!response.ok) {
-            console.error(`Ar-IO kļūda [${response.status}]:`, data);
+            console.error(`Ar-IO kļūda [${response.status}]: ${data}`);
+        }
+        
+        // Atgriežam pareizo content-type, ko atsūtīja Ar-IO
+        const contentType = response.headers.get('content-type');
+        if (contentType) {
+            res.setHeader('content-type', contentType);
         }
         
         res.status(response.status).send(data);
